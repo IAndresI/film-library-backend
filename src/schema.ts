@@ -8,6 +8,8 @@ import {
   varchar,
   primaryKey,
   boolean,
+  decimal,
+  jsonb,
 } from 'drizzle-orm/pg-core';
 import { relations } from 'drizzle-orm';
 
@@ -77,14 +79,48 @@ export const reviews = pgTable('reviews', {
   createdAt: timestamp('created_at').defaultNow(),
 });
 
-// Подписки
+// Тарифные планы
+export const subscriptionPlans = pgTable('subscription_plans', {
+  id: serial('id').primaryKey(),
+  name: varchar('name', { length: 100 }).notNull(),
+  description: text('description'),
+  price: decimal('price', { precision: 10, scale: 2 }).notNull(),
+  currency: varchar('currency', { length: 3 }).default('RUB'),
+  durationDays: integer('duration_days').notNull(),
+  isActive: boolean('is_active').default(true),
+  createdAt: timestamp('created_at').defaultNow(),
+});
+
+// Заказы
+export const orders = pgTable('orders', {
+  id: serial('id').primaryKey(),
+  userId: integer('user_id').references(() => users.id, {
+    onDelete: 'cascade',
+  }),
+  planId: integer('plan_id').references(() => subscriptionPlans.id),
+  amount: decimal('amount', { precision: 10, scale: 2 }).notNull(),
+  currency: varchar('currency', { length: 3 }).default('RUB'),
+  status: varchar('status', { length: 20 }).default('pending'), // pending, paid, failed, cancelled
+  paymentMethod: varchar('payment_method', { length: 50 }),
+  externalPaymentId: varchar('external_payment_id', { length: 255 }),
+  metadata: jsonb('metadata'),
+  createdAt: timestamp('created_at').defaultNow(),
+  paidAt: timestamp('paid_at'),
+  expiresAt: timestamp('expires_at'),
+});
+
+// Подписки (обновленная версия)
 export const subscriptions = pgTable('subscriptions', {
   id: serial('id').primaryKey(),
   userId: integer('user_id').references(() => users.id, {
     onDelete: 'cascade',
   }),
-  createdAt: timestamp('created_at').defaultNow(),
+  planId: integer('plan_id').references(() => subscriptionPlans.id),
+  orderId: integer('order_id').references(() => orders.id),
+  status: varchar('status', { length: 20 }).default('active'), // active, expired, cancelled
+  startedAt: timestamp('started_at').defaultNow(),
   expiresAt: timestamp('expires_at').notNull(),
+  autoRenew: boolean('auto_renew').default(false),
 });
 
 // Связь фильм-жанр (многие ко многим)
@@ -156,10 +192,46 @@ export const watchHistory = pgTable('watch_history', {
   progress: integer('progress').default(0),
 });
 
-// Связи между таблицами
+// Обновленные связи
+export const subscriptionPlansRelations = relations(
+  subscriptionPlans,
+  ({ many }) => ({
+    orders: many(orders),
+    subscriptions: many(subscriptions),
+  }),
+);
+
+export const ordersRelations = relations(orders, ({ one, many }) => ({
+  user: one(users, {
+    fields: [orders.userId],
+    references: [users.id],
+  }),
+  plan: one(subscriptionPlans, {
+    fields: [orders.planId],
+    references: [subscriptionPlans.id],
+  }),
+  subscriptions: many(subscriptions),
+}));
+
+export const subscriptionsRelations = relations(subscriptions, ({ one }) => ({
+  user: one(users, {
+    fields: [subscriptions.userId],
+    references: [users.id],
+  }),
+  plan: one(subscriptionPlans, {
+    fields: [subscriptions.planId],
+    references: [subscriptionPlans.id],
+  }),
+  order: one(orders, {
+    fields: [subscriptions.orderId],
+    references: [orders.id],
+  }),
+}));
+
 export const usersRelations = relations(users, ({ many }) => ({
   reviews: many(reviews),
   subscriptions: many(subscriptions),
+  orders: many(orders),
   favorites: many(userFavorites),
   watchHistory: many(watchHistory),
 }));
@@ -188,13 +260,6 @@ export const reviewsRelations = relations(reviews, ({ one }) => ({
   film: one(films, {
     fields: [reviews.filmId],
     references: [films.id],
-  }),
-}));
-
-export const subscriptionsRelations = relations(subscriptions, ({ one }) => ({
-  user: one(users, {
-    fields: [subscriptions.userId],
-    references: [users.id],
   }),
 }));
 

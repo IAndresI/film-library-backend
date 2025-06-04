@@ -1,4 +1,5 @@
 import express from 'express';
+import cors from 'cors';
 import filmRoutes from './routes/filmRoutes';
 import genreRoutes from './routes/genreRoutes';
 import userRoutes from './routes/userRoutes';
@@ -7,6 +8,14 @@ import { errorHandler } from './middlewares/errorHandler';
 import authRoutes from './routes/authRoutes';
 
 const app = express();
+
+// CORS настройка
+app.use(
+  cors({
+    origin: 'http://localhost:5173',
+    credentials: true,
+  }),
+);
 
 app.use(express.json());
 

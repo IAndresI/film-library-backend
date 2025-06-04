@@ -24,19 +24,21 @@ export const authenticate = (
     const token = jwtService.extractTokenFromHeader(req.headers.authorization);
 
     if (!token) {
-      return res.status(401).json({
+      res.status(401).json({
         success: false,
         message: 'Токен не предоставлен',
       });
+      return;
     }
 
     const payload = jwtService.verifyToken(token);
 
     if (!payload) {
-      return res.status(401).json({
+      res.status(401).json({
         success: false,
         message: 'Недействительный токен',
       });
+      return;
     }
 
     // Добавляем данные пользователя в запрос

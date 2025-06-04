@@ -1,4 +1,4 @@
-import { Request, Response } from 'express';
+import { Request, Response, NextFunction } from 'express';
 import { db } from '../db/connection';
 import { users } from '../schema';
 import { eq } from 'drizzle-orm';
@@ -94,17 +94,13 @@ export const verifyOTP = async (req: Request, res: Response) => {
     });
 
     res.status(200).json({
-      success: true,
-      message: 'Авторизация успешна',
-      data: {
-        token,
-        user: {
-          id: userData.id,
-          email: userData.email,
-          name: userData.name,
-          avatar: userData.avatar,
-          isAdmin: userData.isAdmin,
-        },
+      token,
+      user: {
+        id: userData.id,
+        email: userData.email,
+        name: userData.name,
+        avatar: userData.avatar,
+        isAdmin: userData.isAdmin,
       },
     });
   } catch (error) {
@@ -157,16 +153,11 @@ export const verifyToken = async (req: Request, res: Response) => {
     const userData = user[0];
 
     res.status(200).json({
-      success: true,
-      data: {
-        user: {
-          id: userData.id,
-          email: userData.email,
-          name: userData.name,
-          avatar: userData.avatar,
-          isAdmin: userData.isAdmin,
-        },
-      },
+      id: userData.id,
+      email: userData.email,
+      name: userData.name,
+      avatar: userData.avatar,
+      isAdmin: userData.isAdmin,
     });
   } catch (error) {
     console.error('Ошибка проверки токена:', error);
@@ -174,5 +165,56 @@ export const verifyToken = async (req: Request, res: Response) => {
       success: false,
       message: 'Внутренняя ошибка сервера',
     });
+  }
+};
+
+// Получить текущего авторизованного пользователя
+export const getCurrentUser = async (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) => {
+  try {
+    if (!req.user) {
+      res.status(401).json({
+        success: false,
+        message: 'Пользователь не авторизован',
+      });
+      return;
+    }
+
+    // Получаем свежие данные пользователя из БД
+    const user = await db
+      .select({
+        id: users.id,
+        email: users.email,
+        name: users.name,
+        avatar: users.avatar,
+        isAdmin: users.isAdmin,
+        createdAt: users.createdAt,
+      })
+      .from(users)
+      .where(eq(users.id, req.user.userId))
+      .limit(1);
+
+    if (user.length === 0) {
+      res.status(404).json({
+        success: false,
+        message: 'Пользователь не найден',
+      });
+      return;
+    }
+
+    const userData = user[0];
+
+    res.status(200).json({
+      id: userData.id,
+      email: userData.email,
+      name: userData.name,
+      avatar: userData.avatar,
+      isAdmin: userData.isAdmin,
+    });
+  } catch (error) {
+    next(error);
   }
 };

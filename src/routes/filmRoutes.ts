@@ -7,7 +7,6 @@ import {
   updateFilm,
   deleteFilm,
   searchFilms,
-  getFilmsByGenre,
   toggleFilmVisibility,
 } from '../controllers/filmController';
 
@@ -16,7 +15,6 @@ const router = Router();
 // Публичные роуты
 router.get('/', getFilms);
 router.get('/search', searchFilms);
-router.get('/genre/:genreId', getFilmsByGenre);
 router.get('/:id', getFilmById);
 
 // Админские роуты

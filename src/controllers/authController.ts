@@ -4,6 +4,7 @@ import { users } from '../schema';
 import { eq } from 'drizzle-orm';
 import { otpService } from '../services/otpService';
 import { jwtService } from '../services/jwtService';
+import { paymentService } from '../services/paymentService';
 
 // Отправка OTP кода
 export const sendOTP = async (req: Request, res: Response) => {
@@ -152,12 +153,16 @@ export const verifyToken = async (req: Request, res: Response) => {
 
     const userData = user[0];
 
+    // Получаем подписку пользователя
+    const subscription = await paymentService.getUserSubscription(userData.id);
+
     res.status(200).json({
       id: userData.id,
       email: userData.email,
       name: userData.name,
       avatar: userData.avatar,
       isAdmin: userData.isAdmin,
+      subscription: subscription || null,
     });
   } catch (error) {
     console.error('Ошибка проверки токена:', error);
@@ -207,12 +212,16 @@ export const getCurrentUser = async (
 
     const userData = user[0];
 
+    // Получаем подписку пользователя
+    const subscription = await paymentService.getUserSubscription(userData.id);
+
     res.status(200).json({
       id: userData.id,
       email: userData.email,
       name: userData.name,
       avatar: userData.avatar,
       isAdmin: userData.isAdmin,
+      subscription: subscription || null,
     });
   } catch (error) {
     next(error);

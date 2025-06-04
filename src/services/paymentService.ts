@@ -190,6 +190,9 @@ export class PaymentService {
   }
 
   async getUserSubscription(userId: number): Promise<any> {
+    // Сначала обновляем статусы истекших подписок для пользователя
+    await this.updateExpiredSubscriptions(userId);
+
     const activeSubscription = await db
       .select({
         id: subscriptions.id,
@@ -197,8 +200,8 @@ export class PaymentService {
         startedAt: subscriptions.startedAt,
         expiresAt: subscriptions.expiresAt,
         autoRenew: subscriptions.autoRenew,
-        planName: subscriptionPlans.name,
-        planPrice: subscriptionPlans.price,
+        name: subscriptionPlans.name,
+        price: subscriptionPlans.price,
       })
       .from(subscriptions)
       .leftJoin(
@@ -215,6 +218,63 @@ export class PaymentService {
       .limit(1);
 
     return activeSubscription[0] || null;
+  }
+
+  // Обновляет статус истекших подписок для конкретного пользователя
+  async updateExpiredSubscriptions(userId?: number): Promise<void> {
+    const now = new Date();
+
+    const whereCondition = userId
+      ? and(
+          eq(subscriptions.status, 'active'),
+          lt(subscriptions.expiresAt, now),
+          eq(subscriptions.userId, userId),
+        )
+      : and(
+          eq(subscriptions.status, 'active'),
+          lt(subscriptions.expiresAt, now),
+        );
+
+    await db
+      .update(subscriptions)
+      .set({ status: 'expired' })
+      .where(whereCondition);
+  }
+
+  // Массовое обновление всех истекших подписок (для cron задачи)
+  async updateAllExpiredSubscriptions(): Promise<{ updated: number }> {
+    const now = new Date();
+
+    const result = await db
+      .update(subscriptions)
+      .set({ status: 'expired' })
+      .where(
+        and(
+          eq(subscriptions.status, 'active'),
+          lt(subscriptions.expiresAt, now),
+        ),
+      )
+      .returning({ id: subscriptions.id });
+
+    return { updated: result.length };
+  }
+
+  // Проверяет активность подписки пользователя (для middleware доступа к контенту)
+  async hasActiveSubscription(userId: number): Promise<boolean> {
+    await this.updateExpiredSubscriptions(userId);
+
+    const subscription = await db
+      .select({ id: subscriptions.id })
+      .from(subscriptions)
+      .where(
+        and(
+          eq(subscriptions.userId, userId),
+          eq(subscriptions.status, 'active'),
+        ),
+      )
+      .limit(1);
+
+    return subscription.length > 0;
   }
 }
 

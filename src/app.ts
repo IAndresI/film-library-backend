@@ -7,6 +7,7 @@ import reviewRoutes from './routes/reviewRoutes';
 import { errorHandler } from './middlewares/errorHandler';
 import authRoutes from './routes/authRoutes';
 import paymentRoutes from './routes/paymentRoutes';
+import subscriptionRoutes from './routes/subscriptionRoutes';
 
 const app = express();
 
@@ -22,6 +23,7 @@ app.use(express.json());
 
 // Routes
 app.use('/api/payments', paymentRoutes);
+app.use('/api/subscriptions', subscriptionRoutes);
 app.use('/api/films', filmRoutes);
 app.use('/api/genres', genreRoutes);
 app.use('/api/users', userRoutes);

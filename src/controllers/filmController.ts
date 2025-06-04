@@ -11,13 +11,16 @@ import {
   users,
 } from '../schema';
 
-// Получить все видимые фильмы
+// Получить все видимые фильмы (с опциональной фильтрацией по жанру)
 export const getFilms = async (
   req: Request,
   res: Response,
   next: NextFunction,
 ) => {
   try {
+    const { genreId } = req.query;
+
+    // Получаем все видимые фильмы
     const allFilms = await db
       .select({
         id: films.id,
@@ -34,7 +37,51 @@ export const getFilms = async (
       .where(eq(films.isVisible, true))
       .orderBy(desc(films.createdAt));
 
-    res.json(allFilms);
+    // Для каждого фильма получаем жанры и актёров
+    const filmsWithDetails = await Promise.all(
+      allFilms.map(async (film) => {
+        // Жанры фильма
+        const filmGenresList = await db
+          .select({
+            id: genres.id,
+            name: genres.name,
+            icon: genres.icon,
+          })
+          .from(genres)
+          .innerJoin(filmGenres, eq(genres.id, filmGenres.genreId))
+          .where(eq(filmGenres.filmId, film.id));
+
+        // Актёры фильма (только видимые)
+        const filmActorsList = await db
+          .select({
+            id: actors.id,
+            name: actors.name,
+            image: actors.image,
+            birthday: actors.birthday,
+            description: actors.description,
+            role: filmActors.role,
+          })
+          .from(actors)
+          .innerJoin(filmActors, eq(actors.id, filmActors.actorId))
+          .where(eq(filmActors.filmId, film.id) && eq(actors.isVisible, true));
+
+        return {
+          ...film,
+          genres: filmGenresList,
+          actors: filmActorsList,
+        };
+      }),
+    );
+
+    // Если указан genreId, фильтруем результат
+    let result = filmsWithDetails;
+    if (genreId && !isNaN(Number(genreId))) {
+      result = filmsWithDetails.filter((film) =>
+        film.genres.some((genre) => genre.id === Number(genreId)),
+      );
+    }
+
+    res.json(result);
   } catch (error) {
     next(error);
   }
@@ -268,38 +315,43 @@ export const searchFilms = async (
       .where(like(films.name, `%${query}%`) && eq(films.isVisible, true))
       .orderBy(desc(films.createdAt));
 
-    res.json(searchResults);
-  } catch (error) {
-    next(error);
-  }
-};
+    // Для каждого фильма получаем жанры и актёров
+    const filmsWithDetails = await Promise.all(
+      searchResults.map(async (film) => {
+        // Жанры фильма
+        const filmGenresList = await db
+          .select({
+            id: genres.id,
+            name: genres.name,
+            icon: genres.icon,
+          })
+          .from(genres)
+          .innerJoin(filmGenres, eq(genres.id, filmGenres.genreId))
+          .where(eq(filmGenres.filmId, film.id));
 
-// Получить фильмы по жанру (только видимые)
-export const getFilmsByGenre = async (
-  req: Request,
-  res: Response,
-  next: NextFunction,
-) => {
-  try {
-    const genreId = parseInt(req.params.genreId, 10);
+        // Актёры фильма (только видимые)
+        const filmActorsList = await db
+          .select({
+            id: actors.id,
+            name: actors.name,
+            image: actors.image,
+            birthday: actors.birthday,
+            description: actors.description,
+            role: filmActors.role,
+          })
+          .from(actors)
+          .innerJoin(filmActors, eq(actors.id, filmActors.actorId))
+          .where(eq(filmActors.filmId, film.id) && eq(actors.isVisible, true));
 
-    const filmsByGenre = await db
-      .select({
-        id: films.id,
-        name: films.name,
-        description: films.description,
-        image: films.image,
-        releaseDate: films.releaseDate,
-        trailerUrl: films.trailerUrl,
-        filmUrl: films.filmUrl,
-        createdAt: films.createdAt,
-      })
-      .from(films)
-      .innerJoin(filmGenres, eq(films.id, filmGenres.filmId))
-      .where(eq(filmGenres.genreId, genreId) && eq(films.isVisible, true))
-      .orderBy(desc(films.createdAt));
+        return {
+          ...film,
+          genres: filmGenresList,
+          actors: filmActorsList,
+        };
+      }),
+    );
 
-    res.json(filmsByGenre);
+    res.json(filmsWithDetails);
   } catch (error) {
     next(error);
   }

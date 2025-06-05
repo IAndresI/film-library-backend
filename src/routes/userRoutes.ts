@@ -3,6 +3,7 @@ import {
   getUsers,
   getUserById,
   createUser,
+  editUser,
   getUserFavorites,
   addToFavorites,
   removeFromFavorites,
@@ -15,6 +16,7 @@ const router = Router();
 router.get('/', getUsers);
 router.get('/:id', getUserById);
 router.post('/', createUser);
+router.put('/:id', editUser);
 
 // Избранное
 router.get('/:id/favorites', getUserFavorites);

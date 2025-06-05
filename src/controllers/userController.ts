@@ -85,6 +85,39 @@ export const createUser = async (
   }
 };
 
+// Редактировать пользователя
+export const editUser = async (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const { name } = req.body;
+
+    const updatedUser = await db
+      .update(users)
+      .set({ name })
+      .where(eq(users.id, id))
+      .returning({
+        id: users.id,
+        name: users.name,
+        email: users.email,
+        avatar: users.avatar,
+        createdAt: users.createdAt,
+      });
+
+    if (!updatedUser[0]) {
+      res.status(404).json({ message: 'Пользователь не найден' });
+      return;
+    }
+
+    res.json(updatedUser[0]);
+  } catch (error) {
+    next(error);
+  }
+};
+
 // Получить избранные фильмы пользователя
 export const getUserFavorites = async (
   req: Request,

@@ -1,6 +1,6 @@
 import { db } from '../db/connection';
 import { orders, subscriptions, subscriptionPlans } from '../schema';
-import { eq, and, lt } from 'drizzle-orm';
+import { eq, and, lt, desc } from 'drizzle-orm';
 import {
   ICreatePayment,
   Payment,
@@ -193,7 +193,8 @@ export class PaymentService {
     // Сначала обновляем статусы истекших подписок для пользователя
     await this.updateExpiredSubscriptions(userId);
 
-    const activeSubscription = await db
+    // Ищем последнюю подписку пользователя (активную или истекшую)
+    const subscription = await db
       .select({
         id: subscriptions.id,
         status: subscriptions.status,
@@ -208,16 +209,11 @@ export class PaymentService {
         subscriptionPlans,
         eq(subscriptions.planId, subscriptionPlans.id),
       )
-      .where(
-        and(
-          eq(subscriptions.userId, userId),
-          eq(subscriptions.status, 'active'),
-        ),
-      )
-      .orderBy(subscriptions.expiresAt)
+      .where(eq(subscriptions.userId, userId))
+      .orderBy(desc(subscriptions.expiresAt))
       .limit(1);
 
-    return activeSubscription[0] || null;
+    return subscription[0] || null;
   }
 
   // Обновляет статус истекших подписок для конкретного пользователя

@@ -4,6 +4,8 @@ import filmRoutes from './routes/filmRoutes';
 import genreRoutes from './routes/genreRoutes';
 import userRoutes from './routes/userRoutes';
 import reviewRoutes from './routes/reviewRoutes';
+import orderRoutes from './routes/orderRoutes';
+import actorRoutes from './routes/actorRoutes';
 import { errorHandler } from './middlewares/errorHandler';
 import authRoutes from './routes/authRoutes';
 import paymentRoutes from './routes/paymentRoutes';
@@ -21,6 +23,9 @@ app.use(
 
 app.use(express.json());
 
+// Раздача статики
+app.use('/uploads', express.static('uploads'));
+
 // Routes
 app.use('/api/payments', paymentRoutes);
 app.use('/api/subscriptions', subscriptionRoutes);
@@ -28,6 +33,8 @@ app.use('/api/films', filmRoutes);
 app.use('/api/genres', genreRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/reviews', reviewRoutes);
+app.use('/api/orders', orderRoutes);
+app.use('/api/actors', actorRoutes);
 app.use('/api/auth', authRoutes);
 
 // Global error handler (should be after routes)

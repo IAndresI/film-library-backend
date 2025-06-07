@@ -1,7 +1,9 @@
 import { Request, Response, NextFunction } from 'express';
-import { eq, desc } from 'drizzle-orm';
+import { eq, desc, and } from 'drizzle-orm';
 import { db } from '../db/connection';
 import { users, userFavorites, films, watchHistory } from '../schema';
+import { deleteFile } from '../utils/fileUtils';
+import { paymentService } from '../services/paymentService';
 
 // Получить всех пользователей
 export const getUsers = async (
@@ -17,11 +19,23 @@ export const getUsers = async (
         email: users.email,
         avatar: users.avatar,
         createdAt: users.createdAt,
+        isAdmin: users.isAdmin,
       })
       .from(users)
       .orderBy(desc(users.createdAt));
 
-    res.json(allUsers);
+    // Добавляем подписку для каждого пользователя
+    const usersWithSubscriptions = await Promise.all(
+      allUsers.map(async (user) => {
+        const subscription = await paymentService.getUserSubscription(user.id);
+        return {
+          ...user,
+          subscription: subscription || null,
+        };
+      }),
+    );
+
+    res.json(usersWithSubscriptions);
   } catch (error) {
     next(error);
   }
@@ -43,6 +57,7 @@ export const getUserById = async (
         email: users.email,
         avatar: users.avatar,
         createdAt: users.createdAt,
+        isAdmin: users.isAdmin,
       })
       .from(users)
       .where(eq(users.id, id))
@@ -53,7 +68,13 @@ export const getUserById = async (
       return;
     }
 
-    res.json(user[0]);
+    // Получаем подписку пользователя
+    const subscription = await paymentService.getUserSubscription(user[0].id);
+
+    res.json({
+      ...user[0],
+      subscription: subscription || null,
+    });
   } catch (error) {
     next(error);
   }
@@ -66,7 +87,13 @@ export const createUser = async (
   next: NextFunction,
 ) => {
   try {
-    const { name, email, avatar } = req.body;
+    const { name, email } = req.body;
+
+    // Получаем путь к загруженному аватару
+    let avatar = req.body.avatar; // URL из поля формы если есть
+    if (req.file) {
+      avatar = `/${req.file.path.replace(/\\/g, '/')}`;
+    }
 
     const newUser = await db
       .insert(users)
@@ -77,9 +104,18 @@ export const createUser = async (
         email: users.email,
         avatar: users.avatar,
         createdAt: users.createdAt,
+        isAdmin: users.isAdmin,
       });
 
-    res.status(201).json(newUser[0]);
+    // Получаем подписку нового пользователя (будет null)
+    const subscription = await paymentService.getUserSubscription(
+      newUser[0].id,
+    );
+
+    res.status(201).json({
+      ...newUser[0],
+      subscription: subscription || null,
+    });
   } catch (error) {
     next(error);
   }
@@ -95,9 +131,43 @@ export const editUser = async (
     const id = parseInt(req.params.id, 10);
     const { name } = req.body;
 
+    // Получаем старые данные
+    const existingUser = await db
+      .select({ avatar: users.avatar })
+      .from(users)
+      .where(eq(users.id, id))
+      .limit(1);
+
+    if (!existingUser[0]) {
+      res.status(404).json({ message: 'Пользователь не найден' });
+      return;
+    }
+
+    // Готовим объект для обновления
+    const updateData: { name: string; avatar?: string | null } = { name };
+
+    // Обрабатываем аватар
+    if (req.file) {
+      // Если передан новый файл - загружаем его
+      if (existingUser[0].avatar) {
+        deleteFile(existingUser[0].avatar);
+      }
+      updateData.avatar = `/${req.file.path.replace(/\\/g, '/')}`;
+    } else if (req.body.avatar === 'null') {
+      // Если передана строка "null" - удаляем текущий аватар
+      if (existingUser[0].avatar) {
+        deleteFile(existingUser[0].avatar);
+      }
+      updateData.avatar = null;
+    } else if (req.body.avatar) {
+      // Если передан URL - устанавливаем его
+      updateData.avatar = req.body.avatar;
+    }
+    // Если поле avatar не передано вообще - не трогаем текущий аватар
+
     const updatedUser = await db
       .update(users)
-      .set({ name })
+      .set(updateData)
       .where(eq(users.id, id))
       .returning({
         id: users.id,
@@ -105,14 +175,18 @@ export const editUser = async (
         email: users.email,
         avatar: users.avatar,
         createdAt: users.createdAt,
+        isAdmin: users.isAdmin,
       });
 
-    if (!updatedUser[0]) {
-      res.status(404).json({ message: 'Пользователь не найден' });
-      return;
-    }
+    // Получаем подписку обновленного пользователя
+    const subscription = await paymentService.getUserSubscription(
+      updatedUser[0].id,
+    );
 
-    res.json(updatedUser[0]);
+    res.json({
+      ...updatedUser[0],
+      subscription: subscription || null,
+    });
   } catch (error) {
     next(error);
   }
@@ -183,7 +257,7 @@ export const removeFromFavorites = async (
     const deleted = await db
       .delete(userFavorites)
       .where(
-        eq(userFavorites.userId, userId) && eq(userFavorites.filmId, filmId),
+        and(eq(userFavorites.userId, userId), eq(userFavorites.filmId, filmId)),
       )
       .returning();
 
@@ -222,6 +296,43 @@ export const getUserWatchHistory = async (
       .orderBy(desc(watchHistory.watchedAt));
 
     res.json(history);
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Удалить пользователя
+export const deleteUser = async (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+
+    // Получаем данные пользователя перед удалением для удаления медиа файлов
+    const userToDelete = await db
+      .select()
+      .from(users)
+      .where(eq(users.id, id))
+      .limit(1);
+
+    if (!userToDelete[0]) {
+      res.status(404).json({ message: 'Пользователь не найден' });
+      return;
+    }
+
+    // Удаляем аватар пользователя
+    if (userToDelete[0].avatar) {
+      deleteFile(userToDelete[0].avatar);
+    }
+
+    const deletedUser = await db
+      .delete(users)
+      .where(eq(users.id, id))
+      .returning();
+
+    res.json(deletedUser[0]);
   } catch (error) {
     next(error);
   }

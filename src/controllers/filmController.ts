@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
-import { eq, desc, like, avg } from 'drizzle-orm';
+import { eq, desc, like, avg, and } from 'drizzle-orm';
 import { db } from '../db/connection';
 import {
   films,
@@ -19,7 +19,7 @@ const getFilmRating = async (filmId: number): Promise<number | null> => {
       avgRating: avg(reviews.rating),
     })
     .from(reviews)
-    .where(eq(reviews.filmId, filmId) && eq(reviews.isApproved, true));
+    .where(and(eq(reviews.filmId, filmId), eq(reviews.isApproved, true)));
 
   return ratingResult[0]?.avgRating ? Number(ratingResult[0].avgRating) : null;
 };

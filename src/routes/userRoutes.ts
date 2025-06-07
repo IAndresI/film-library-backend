@@ -4,19 +4,22 @@ import {
   getUserById,
   createUser,
   editUser,
+  deleteUser,
   getUserFavorites,
   addToFavorites,
   removeFromFavorites,
   getUserWatchHistory,
 } from '../controllers/userController';
+import { uploadUserAvatar } from '../middlewares/upload';
 
 const router = Router();
 
 // Основные операции с пользователями
 router.get('/', getUsers);
 router.get('/:id', getUserById);
-router.post('/', createUser);
-router.put('/:id', editUser);
+router.post('/', uploadUserAvatar, createUser);
+router.put('/:id', uploadUserAvatar, editUser);
+router.delete('/:id', deleteUser);
 
 // Избранное
 router.get('/:id/favorites', getUserFavorites);

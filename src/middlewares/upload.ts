@@ -27,6 +27,10 @@ const storage = multer.diskStorage({
       if (file.fieldname === 'image') {
         uploadPath = 'uploads/actors/images';
       }
+    } else if (req.baseUrl.includes('/users')) {
+      if (file.fieldname === 'avatar') {
+        uploadPath = 'uploads/users/images';
+      }
     }
 
     ensureDir(uploadPath);
@@ -47,11 +51,11 @@ const upload = multer({
   },
   fileFilter: (req, file, cb) => {
     // Проверяем типы файлов
-    if (file.fieldname === 'image') {
+    if (file.fieldname === 'image' || file.fieldname === 'avatar') {
       if (file.mimetype.startsWith('image/')) {
         cb(null, true);
       } else {
-        cb(new Error('Только изображения разрешены для поля image'));
+        cb(new Error('Только изображения разрешены для поля image/avatar'));
       }
     } else if (
       file.fieldname === 'trailerFile' ||
@@ -82,5 +86,8 @@ export const uploadFilmMedia = upload.fields([
 
 // Middleware для актёров - только изображение
 export const uploadActorImage = upload.single('image');
+
+// Middleware для пользователей - только аватар
+export const uploadUserAvatar = upload.single('avatar');
 
 export default upload;

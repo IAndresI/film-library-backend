@@ -12,19 +12,63 @@ export const getApprovedReviews = async (
   try {
     const filmId = parseInt(req.params.filmId, 10);
 
-    const approvedReviews = await db
+    const reviewsData = await db
       .select({
         id: reviews.id,
         rating: reviews.rating,
         text: reviews.text,
+        isApproved: reviews.isApproved,
         createdAt: reviews.createdAt,
+        // Полная информация о пользователе
+        userId: users.id,
         userName: users.name,
+        userEmail: users.email,
         userAvatar: users.avatar,
+        userIsAdmin: users.isAdmin,
+        userCreatedAt: users.createdAt,
+        // Полная информация о фильме
+        filmId: films.id,
+        filmName: films.name,
+        filmDescription: films.description,
+        filmImage: films.image,
+        filmReleaseDate: films.releaseDate,
+        filmCreatedAt: films.createdAt,
+        filmTrailerUrl: films.trailerUrl,
+        filmUrl: films.filmUrl,
+        filmIsVisible: films.isVisible,
       })
       .from(reviews)
       .innerJoin(users, eq(reviews.userId, users.id))
+      .innerJoin(films, eq(reviews.filmId, films.id))
       .where(eq(reviews.filmId, filmId) && eq(reviews.isApproved, true))
       .orderBy(desc(reviews.createdAt));
+
+    const approvedReviews = reviewsData.map((review) => ({
+      id: review.id,
+      rating: review.rating,
+      text: review.text,
+      isApproved: review.isApproved,
+      createdAt: review.createdAt,
+      user: {
+        id: review.userId,
+        name: review.userName,
+        email: review.userEmail,
+        avatar: review.userAvatar,
+        isAdmin: review.userIsAdmin,
+        createdAt: review.userCreatedAt,
+      },
+      film: {
+        id: review.filmId,
+        name: review.filmName,
+        description: review.filmDescription,
+        image: review.filmImage,
+        releaseDate: review.filmReleaseDate,
+        createdAt: review.filmCreatedAt,
+        trailerUrl: review.filmTrailerUrl,
+        filmUrl: review.filmUrl,
+        isVisible: review.filmIsVisible,
+      },
+    }));
 
     res.json(approvedReviews);
   } catch (error) {
@@ -39,22 +83,62 @@ export const getAllReviews = async (
   next: NextFunction,
 ) => {
   try {
-    const allReviews = await db
+    const reviewsData = await db
       .select({
         id: reviews.id,
         rating: reviews.rating,
         text: reviews.text,
         isApproved: reviews.isApproved,
         createdAt: reviews.createdAt,
+        // Полная информация о пользователе
+        userId: users.id,
         userName: users.name,
+        userEmail: users.email,
         userAvatar: users.avatar,
-        filmName: films.name,
+        userIsAdmin: users.isAdmin,
+        userCreatedAt: users.createdAt,
+        // Полная информация о фильме
         filmId: films.id,
+        filmName: films.name,
+        filmDescription: films.description,
+        filmImage: films.image,
+        filmReleaseDate: films.releaseDate,
+        filmCreatedAt: films.createdAt,
+        filmTrailerUrl: films.trailerUrl,
+        filmUrl: films.filmUrl,
+        filmIsVisible: films.isVisible,
       })
       .from(reviews)
       .innerJoin(users, eq(reviews.userId, users.id))
       .innerJoin(films, eq(reviews.filmId, films.id))
       .orderBy(desc(reviews.createdAt));
+
+    const allReviews = reviewsData.map((review) => ({
+      id: review.id,
+      rating: review.rating,
+      text: review.text,
+      isApproved: review.isApproved,
+      createdAt: review.createdAt,
+      user: {
+        id: review.userId,
+        name: review.userName,
+        email: review.userEmail,
+        avatar: review.userAvatar,
+        isAdmin: review.userIsAdmin,
+        createdAt: review.userCreatedAt,
+      },
+      film: {
+        id: review.filmId,
+        name: review.filmName,
+        description: review.filmDescription,
+        image: review.filmImage,
+        releaseDate: review.filmReleaseDate,
+        createdAt: review.filmCreatedAt,
+        trailerUrl: review.filmTrailerUrl,
+        filmUrl: review.filmUrl,
+        isVisible: review.filmIsVisible,
+      },
+    }));
 
     res.json(allReviews);
   } catch (error) {
@@ -69,22 +153,63 @@ export const getPendingReviews = async (
   next: NextFunction,
 ) => {
   try {
-    const pendingReviews = await db
+    const reviewsData = await db
       .select({
         id: reviews.id,
         rating: reviews.rating,
         text: reviews.text,
+        isApproved: reviews.isApproved,
         createdAt: reviews.createdAt,
+        // Полная информация о пользователе
+        userId: users.id,
         userName: users.name,
+        userEmail: users.email,
         userAvatar: users.avatar,
-        filmName: films.name,
+        userIsAdmin: users.isAdmin,
+        userCreatedAt: users.createdAt,
+        // Полная информация о фильме
         filmId: films.id,
+        filmName: films.name,
+        filmDescription: films.description,
+        filmImage: films.image,
+        filmReleaseDate: films.releaseDate,
+        filmCreatedAt: films.createdAt,
+        filmTrailerUrl: films.trailerUrl,
+        filmUrl: films.filmUrl,
+        filmIsVisible: films.isVisible,
       })
       .from(reviews)
       .innerJoin(users, eq(reviews.userId, users.id))
       .innerJoin(films, eq(reviews.filmId, films.id))
       .where(eq(reviews.isApproved, false))
       .orderBy(desc(reviews.createdAt));
+
+    const pendingReviews = reviewsData.map((review) => ({
+      id: review.id,
+      rating: review.rating,
+      text: review.text,
+      isApproved: review.isApproved,
+      createdAt: review.createdAt,
+      user: {
+        id: review.userId,
+        name: review.userName,
+        email: review.userEmail,
+        avatar: review.userAvatar,
+        isAdmin: review.userIsAdmin,
+        createdAt: review.userCreatedAt,
+      },
+      film: {
+        id: review.filmId,
+        name: review.filmName,
+        description: review.filmDescription,
+        image: review.filmImage,
+        releaseDate: review.filmReleaseDate,
+        createdAt: review.filmCreatedAt,
+        trailerUrl: review.filmTrailerUrl,
+        filmUrl: review.filmUrl,
+        isVisible: review.filmIsVisible,
+      },
+    }));
 
     res.json(pendingReviews);
   } catch (error) {
@@ -156,17 +281,18 @@ export const rejectReview = async (
   try {
     const id = parseInt(req.params.id, 10);
 
-    const deletedReview = await db
-      .delete(reviews)
+    const rejectedReview = await db
+      .update(reviews)
+      .set({ isApproved: false })
       .where(eq(reviews.id, id))
       .returning();
 
-    if (!deletedReview[0]) {
+    if (!rejectedReview[0]) {
       res.status(404).json({ message: 'Отзыв не найден' });
       return;
     }
 
-    res.json({ message: 'Отзыв отклонён и удалён' });
+    res.json({ message: 'Отзыв отклонён', review: rejectedReview[0] });
   } catch (error) {
     next(error);
   }

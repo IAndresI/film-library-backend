@@ -55,6 +55,53 @@ export const getAllActors = async (
   }
 };
 
+// Получить актёра по ID с фильмами (для админов)
+export const getActorByIdAdmin = async (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+
+    // Основная информация об актёре (без проверки isVisible)
+    const actor = await db
+      .select()
+      .from(actors)
+      .where(eq(actors.id, id))
+      .limit(1);
+
+    if (!actor[0]) {
+      res.status(404).json({ message: 'Актёр не найден' });
+      return;
+    }
+
+    // Фильмы актёра (включая скрытые)
+    const actorFilms = await db
+      .select({
+        id: films.id,
+        name: films.name,
+        image: films.image,
+        releaseDate: films.releaseDate,
+        isVisible: films.isVisible,
+        role: filmActors.role,
+      })
+      .from(films)
+      .innerJoin(filmActors, eq(films.id, filmActors.filmId))
+      .where(eq(filmActors.actorId, id))
+      .orderBy(desc(films.releaseDate));
+
+    const result = {
+      ...actor[0],
+      films: actorFilms,
+    };
+
+    res.json(result);
+  } catch (error) {
+    next(error);
+  }
+};
+
 // Получить актёра по ID с фильмами
 export const getActorById = async (
   req: Request,
@@ -129,7 +176,7 @@ export const createActor = async (
         image,
         birthday,
         description,
-        isVisible: isVisible ?? true,
+        isVisible: isVisible === 'true',
       })
       .returning();
 
@@ -174,7 +221,7 @@ export const updateActor = async (
         image,
         birthday,
         description,
-        isVisible,
+        isVisible: isVisible === 'true',
       })
       .where(eq(actors.id, id))
       .returning();
@@ -199,15 +246,27 @@ export const deleteActor = async (
   try {
     const id = parseInt(req.params.id, 10);
 
+    // Получаем данные актёра перед удалением для удаления медиа файлов
+    const actorToDelete = await db
+      .select()
+      .from(actors)
+      .where(eq(actors.id, id))
+      .limit(1);
+
+    if (!actorToDelete[0]) {
+      res.status(404).json({ message: 'Актёр не найден' });
+      return;
+    }
+
+    // Удаляем изображение актёра
+    if (actorToDelete[0].image) {
+      deleteFile(actorToDelete[0].image);
+    }
+
     const deletedActor = await db
       .delete(actors)
       .where(eq(actors.id, id))
       .returning();
-
-    if (!deletedActor[0]) {
-      res.status(404).json({ message: 'Актёр не найден' });
-      return;
-    }
 
     res.json(deletedActor[0]);
   } catch (error) {

@@ -18,8 +18,8 @@ router.post('/', createReview);
 // Админские роуты
 router.get('/', getAllReviews);
 router.get('/pending', getPendingReviews);
-router.patch('/:id/approve', approveReview);
-router.delete('/:id/reject', rejectReview);
+router.put('/:id/approve', approveReview);
+router.put('/:id/reject', rejectReview);
 router.delete('/:id', deleteReview);
 
 export default router;

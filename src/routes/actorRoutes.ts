@@ -3,6 +3,7 @@ import {
   getActors,
   getAllActors,
   getActorById,
+  getActorByIdAdmin,
   createActor,
   updateActor,
   deleteActor,
@@ -20,6 +21,7 @@ router.get('/:id', getActorById);
 
 // Админские роуты
 router.get('/admin/all', getAllActors);
+router.get('/admin/:id', getActorByIdAdmin);
 router.post('/', uploadActorImage, createActor);
 router.put('/:id', uploadActorImage, updateActor);
 router.delete('/:id', deleteActor);

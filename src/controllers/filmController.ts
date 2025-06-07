@@ -360,7 +360,7 @@ export const createFilm = async (
         releaseDate,
         trailerUrl,
         filmUrl,
-        isVisible: isVisible ?? true,
+        isVisible: isVisible === 'true',
       })
       .returning();
 
@@ -434,7 +434,7 @@ export const updateFilmData = async (
         description,
         image,
         releaseDate,
-        isVisible: !!isVisible,
+        isVisible: isVisible === 'true',
       })
       .where(eq(films.id, id))
       .returning();
@@ -544,15 +544,33 @@ export const deleteFilm = async (
   try {
     const id = parseInt(req.params.id, 10);
 
+    // Получаем данные фильма перед удалением для удаления медиа файлов
+    const filmToDelete = await db
+      .select()
+      .from(films)
+      .where(eq(films.id, id))
+      .limit(1);
+
+    if (!filmToDelete[0]) {
+      res.status(404).json({ message: 'Фильм не найден' });
+      return;
+    }
+
+    // Удаляем медиа файлы
+    if (filmToDelete[0].image) {
+      deleteFile(filmToDelete[0].image);
+    }
+    if (filmToDelete[0].trailerUrl) {
+      deleteFile(filmToDelete[0].trailerUrl);
+    }
+    if (filmToDelete[0].filmUrl) {
+      deleteFile(filmToDelete[0].filmUrl);
+    }
+
     const deletedFilm = await db
       .delete(films)
       .where(eq(films.id, id))
       .returning();
-
-    if (!deletedFilm[0]) {
-      res.status(404).json({ message: 'Фильм не найден' });
-      return;
-    }
 
     res.json(deletedFilm[0]);
   } catch (error) {

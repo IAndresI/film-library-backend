@@ -1,9 +1,14 @@
 import { Request, Response, NextFunction } from 'express';
-import { eq, desc, and } from 'drizzle-orm';
+import { eq, desc, and, count } from 'drizzle-orm';
 import { db } from '../db/connection';
 import { users, userFavorites, films, watchHistory } from '../schema';
 import { deleteFile } from '../utils/fileUtils';
 import { paymentService } from '../services/paymentService';
+import {
+  parseSortParams,
+  parseFilterParams,
+  parsePaginationParams,
+} from '../utils/queryParser';
 
 // Получить всех пользователей
 export const getUsers = async (
@@ -12,17 +17,41 @@ export const getUsers = async (
   next: NextFunction,
 ) => {
   try {
-    const allUsers = await db
-      .select({
-        id: users.id,
-        name: users.name,
-        email: users.email,
-        avatar: users.avatar,
-        createdAt: users.createdAt,
-        isAdmin: users.isAdmin,
-      })
-      .from(users)
-      .orderBy(desc(users.createdAt));
+    const selectFields = {
+      id: users.id,
+      name: users.name,
+      email: users.email,
+      avatar: users.avatar,
+      createdAt: users.createdAt,
+      isAdmin: users.isAdmin,
+    };
+
+    // Парсинг параметров
+    const orderByClause = parseSortParams(req, selectFields);
+    const whereCondition = parseFilterParams(req, selectFields);
+    const pagination = parsePaginationParams(req);
+
+    // Базовый запрос
+    const baseQuery = db.select(selectFields).from(users);
+
+    // Запрос данных с пагинацией
+    const usersQuery = whereCondition
+      ? baseQuery.where(whereCondition)
+      : baseQuery;
+
+    const allUsers = await usersQuery
+      .orderBy(orderByClause)
+      .limit(pagination.limit)
+      .offset(pagination.offset);
+
+    // Запрос общего количества
+    const countQuery = db.select({ count: count() }).from(users);
+    const totalCountResult = whereCondition
+      ? await countQuery.where(whereCondition)
+      : await countQuery;
+
+    const totalCount = totalCountResult[0]?.count || 0;
+    const totalPages = Math.ceil(totalCount / pagination.pageSize);
 
     // Добавляем подписку для каждого пользователя
     const usersWithSubscriptions = await Promise.all(
@@ -35,7 +64,17 @@ export const getUsers = async (
       }),
     );
 
-    res.json(usersWithSubscriptions);
+    res.json({
+      data: usersWithSubscriptions,
+      pagination: {
+        pageIndex: pagination.pageIndex,
+        pageSize: pagination.pageSize,
+        totalCount,
+        totalPages,
+        hasNextPage: pagination.pageIndex < totalPages - 1,
+        hasPreviousPage: pagination.pageIndex > 0,
+      },
+    });
   } catch (error) {
     next(error);
   }

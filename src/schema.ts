@@ -49,6 +49,7 @@ export const actors = pgTable('actors', {
   birthday: date('birthday'),
   description: text('description'),
   isVisible: boolean('is_visible').default(true),
+  createdAt: timestamp('created_at').defaultNow(),
 });
 
 // Фильмы
@@ -121,6 +122,7 @@ export const subscriptions = pgTable('subscriptions', {
   startedAt: timestamp('started_at').defaultNow(),
   expiresAt: timestamp('expires_at').notNull(),
   autoRenew: boolean('auto_renew').default(false),
+  createdAt: timestamp('created_at').defaultNow(),
 });
 
 // Связь фильм-жанр (многие ко многим)

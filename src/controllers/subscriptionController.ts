@@ -1,8 +1,136 @@
 import { Request, Response } from 'express';
 import { paymentService } from '../services/paymentService';
 import { db } from '../db/connection';
-import { subscriptions, subscriptionPlans } from '../schema';
-import { eq, and } from 'drizzle-orm';
+import { subscriptions, subscriptionPlans, users } from '../schema';
+import { eq, and, count, desc } from 'drizzle-orm';
+import {
+  parseSortParams,
+  parseFilterParams,
+  parsePaginationParams,
+} from '../utils/queryParser';
+
+// Общий селект объект для всех запросов подписок
+const getSelectFields = () => ({
+  id: subscriptions.id,
+  userId: subscriptions.userId,
+  planId: subscriptions.planId,
+  orderId: subscriptions.orderId,
+  status: subscriptions.status,
+  startedAt: subscriptions.startedAt,
+  expiresAt: subscriptions.expiresAt,
+  autoRenew: subscriptions.autoRenew,
+  createdAt: subscriptions.createdAt,
+  // Информация о пользователе
+  userName: users.name,
+  userEmail: users.email,
+  userAvatar: users.avatar,
+  userIsAdmin: users.isAdmin,
+  userCreatedAt: users.createdAt,
+  // Информация о плане
+  planName: subscriptionPlans.name,
+  planPrice: subscriptionPlans.price,
+  planDurationDays: subscriptionPlans.durationDays,
+  planDescription: subscriptionPlans.description,
+});
+
+// Общая функция для маппинга результатов
+const mapSubscriptionsData = (subscriptionsData: any[]) =>
+  subscriptionsData.map((subscription) => ({
+    id: subscription.id,
+    userId: subscription.userId,
+    planId: subscription.planId,
+    orderId: subscription.orderId,
+    status: subscription.status,
+    startedAt: subscription.startedAt,
+    expiresAt: subscription.expiresAt,
+    autoRenew: subscription.autoRenew,
+    createdAt: subscription.createdAt,
+    user: {
+      id: subscription.userId,
+      name: subscription.userName,
+      email: subscription.userEmail,
+      avatar: subscription.userAvatar,
+      isAdmin: subscription.userIsAdmin,
+      createdAt: subscription.userCreatedAt,
+    },
+    plan: {
+      id: subscription.planId,
+      name: subscription.planName,
+      price: subscription.planPrice,
+      durationDays: subscription.planDurationDays,
+      description: subscription.planDescription,
+    },
+  }));
+
+// Получить все подписки (для админов)
+export const getAllSubscriptions = async (req: Request, res: Response) => {
+  try {
+    const selectFields = getSelectFields();
+
+    // Парсинг параметров
+    const orderByClause = parseSortParams(req, selectFields);
+    const whereCondition = parseFilterParams(req, selectFields);
+    const pagination = parsePaginationParams(req);
+
+    // Базовый запрос с JOIN-ами
+    const baseQuery = db
+      .select(selectFields)
+      .from(subscriptions)
+      .innerJoin(users, eq(subscriptions.userId, users.id))
+      .innerJoin(
+        subscriptionPlans,
+        eq(subscriptions.planId, subscriptionPlans.id),
+      );
+
+    // Запрос данных с пагинацией
+    const subscriptionsQuery = whereCondition
+      ? baseQuery.where(whereCondition)
+      : baseQuery;
+
+    const queryWithOrder = orderByClause
+      ? subscriptionsQuery.orderBy(orderByClause)
+      : subscriptionsQuery.orderBy(desc(subscriptions.createdAt));
+
+    const allSubscriptions = await queryWithOrder
+      .limit(pagination.limit)
+      .offset(pagination.offset);
+
+    // Запрос общего количества
+    const countQuery = db
+      .select({ count: count() })
+      .from(subscriptions)
+      .innerJoin(users, eq(subscriptions.userId, users.id))
+      .innerJoin(
+        subscriptionPlans,
+        eq(subscriptions.planId, subscriptionPlans.id),
+      );
+
+    const totalCountResult = whereCondition
+      ? await countQuery.where(whereCondition)
+      : await countQuery;
+
+    const totalCount = totalCountResult[0]?.count || 0;
+    const totalPages = Math.ceil(totalCount / pagination.pageSize);
+
+    res.json({
+      data: mapSubscriptionsData(allSubscriptions),
+      pagination: {
+        pageIndex: pagination.pageIndex,
+        pageSize: pagination.pageSize,
+        totalCount,
+        totalPages,
+        hasNextPage: pagination.pageIndex < totalPages - 1,
+        hasPreviousPage: pagination.pageIndex > 0,
+      },
+    });
+  } catch (error) {
+    console.error('Ошибка получения подписок:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Ошибка получения подписок',
+    });
+  }
+};
 
 export const getPlans = async (req: Request, res: Response) => {
   try {

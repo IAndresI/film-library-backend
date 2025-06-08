@@ -36,7 +36,8 @@ CREATE TABLE actors (
     image VARCHAR(500),
     birthday DATE,
     description TEXT,
-    is_visible BOOLEAN DEFAULT TRUE
+    is_visible BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Таблица фильмов
@@ -100,7 +101,8 @@ CREATE TABLE subscriptions (
     status VARCHAR(20) DEFAULT 'active', -- active, expired, cancelled
     started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     expires_at TIMESTAMP NOT NULL,
-    auto_renew BOOLEAN DEFAULT FALSE
+    auto_renew BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 );
 
 -- Связующая таблица фильм-жанр (многие ко многим)

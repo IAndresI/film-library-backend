@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
-import { eq, desc, like, avg, and } from 'drizzle-orm';
+import { eq, desc, like, avg, and, count, inArray } from 'drizzle-orm';
 import { db } from '../db/connection';
 import {
   films,
@@ -11,6 +11,67 @@ import {
   users,
 } from '../schema';
 import { deleteFile } from '../utils/fileUtils';
+import {
+  parseSortParams,
+  parseFilterParams,
+  parsePaginationParams,
+} from '../utils/queryParser';
+
+// Общий селект объект для всех запросов
+const getSelectFields = () => ({
+  id: films.id,
+  name: films.name,
+  description: films.description,
+  image: films.image,
+  releaseDate: films.releaseDate,
+  trailerUrl: films.trailerUrl,
+  filmUrl: films.filmUrl,
+  createdAt: films.createdAt,
+  isVisible: films.isVisible,
+});
+
+// Общая функция для обогащения данных фильмов жанрами, актёрами и рейтингом
+const enrichFilmsWithDetails = async (filmsData: any[]) => {
+  return Promise.all(
+    filmsData.map(async (film) => {
+      // Жанры фильма
+      const filmGenresList = await db
+        .select({
+          id: genres.id,
+          name: genres.name,
+          icon: genres.icon,
+        })
+        .from(genres)
+        .innerJoin(filmGenres, eq(genres.id, filmGenres.genreId))
+        .where(eq(filmGenres.filmId, film.id));
+
+      // Актёры фильма (только видимые)
+      const filmActorsList = await db
+        .select({
+          id: actors.id,
+          name: actors.name,
+          image: actors.image,
+          birthday: actors.birthday,
+          description: actors.description,
+          role: filmActors.role,
+          createdAt: actors.createdAt,
+        })
+        .from(actors)
+        .innerJoin(filmActors, eq(actors.id, filmActors.actorId))
+        .where(and(eq(filmActors.filmId, film.id), eq(actors.isVisible, true)));
+
+      // Рейтинг фильма
+      const rating = await getFilmRating(film.id);
+
+      return {
+        ...film,
+        genres: filmGenresList,
+        actors: filmActorsList,
+        rating,
+      };
+    }),
+  );
+};
 
 // Функция для получения рейтинга фильма
 const getFilmRating = async (filmId: number): Promise<number | null> => {
@@ -31,74 +92,57 @@ export const getFilms = async (
   next: NextFunction,
 ) => {
   try {
-    const { genreId } = req.query;
+    const selectFields = getSelectFields();
 
-    // Получаем все видимые фильмы
-    const allFilms = await db
-      .select({
-        id: films.id,
-        name: films.name,
-        description: films.description,
-        image: films.image,
-        releaseDate: films.releaseDate,
-        trailerUrl: films.trailerUrl,
-        filmUrl: films.filmUrl,
-        createdAt: films.createdAt,
-        isVisible: films.isVisible,
-      })
+    // Парсинг параметров
+    const orderByClause = parseSortParams(req, selectFields);
+    const whereCondition = parseFilterParams(req, selectFields);
+    const pagination = parsePaginationParams(req);
+
+    // Базовое условие: только видимые фильмы
+    const baseCondition = eq(films.isVisible, true);
+
+    // Комбинируем с дополнительными фильтрами
+    const finalCondition = whereCondition
+      ? and(baseCondition, whereCondition)
+      : baseCondition;
+
+    // Базовый запрос
+    const baseQuery = db.select(selectFields).from(films);
+
+    // Запрос данных с пагинацией
+    const queryWithWhere = baseQuery.where(finalCondition);
+    const queryWithOrder = orderByClause
+      ? queryWithWhere.orderBy(orderByClause)
+      : queryWithWhere.orderBy(desc(films.createdAt));
+
+    const allFilms = await queryWithOrder
+      .limit(pagination.limit)
+      .offset(pagination.offset);
+
+    // Запрос общего количества
+    const totalCountResult = await db
+      .select({ count: count() })
       .from(films)
-      .where(eq(films.isVisible, true))
-      .orderBy(desc(films.createdAt));
+      .where(finalCondition);
 
-    // Для каждого фильма получаем жанры, актёров и рейтинг
-    const filmsWithDetails = await Promise.all(
-      allFilms.map(async (film) => {
-        // Жанры фильма
-        const filmGenresList = await db
-          .select({
-            id: genres.id,
-            name: genres.name,
-            icon: genres.icon,
-          })
-          .from(genres)
-          .innerJoin(filmGenres, eq(genres.id, filmGenres.genreId))
-          .where(eq(filmGenres.filmId, film.id));
+    const totalCount = totalCountResult[0]?.count || 0;
+    const totalPages = Math.ceil(totalCount / pagination.pageSize);
 
-        // Актёры фильма (только видимые)
-        const filmActorsList = await db
-          .select({
-            id: actors.id,
-            name: actors.name,
-            image: actors.image,
-            birthday: actors.birthday,
-            description: actors.description,
-            role: filmActors.role,
-          })
-          .from(actors)
-          .innerJoin(filmActors, eq(actors.id, filmActors.actorId))
-          .where(eq(filmActors.filmId, film.id) && eq(actors.isVisible, true));
+    // Обогащаем данные жанрами, актёрами и рейтингом
+    const filmsWithDetails = await enrichFilmsWithDetails(allFilms);
 
-        // Рейтинг фильма
-        const rating = await getFilmRating(film.id);
-
-        return {
-          ...film,
-          genres: filmGenresList,
-          actors: filmActorsList,
-          rating,
-        };
-      }),
-    );
-
-    // Если указан genreId, фильтруем результат
-    let result = filmsWithDetails;
-    if (genreId && !isNaN(Number(genreId))) {
-      result = filmsWithDetails.filter((film) =>
-        film.genres.some((genre) => genre.id === Number(genreId)),
-      );
-    }
-
-    res.json(result);
+    res.json({
+      data: filmsWithDetails,
+      pagination: {
+        pageIndex: pagination.pageIndex,
+        pageSize: pagination.pageSize,
+        totalCount,
+        totalPages,
+        hasNextPage: pagination.pageIndex < totalPages - 1,
+        hasPreviousPage: pagination.pageIndex > 0,
+      },
+    });
   } catch (error) {
     next(error);
   }
@@ -141,6 +185,7 @@ export const getFilmByIdAdmin = async (
         birthday: actors.birthday,
         description: actors.description,
         role: filmActors.role,
+        createdAt: actors.createdAt,
       })
       .from(actors)
       .innerJoin(filmActors, eq(actors.id, filmActors.actorId))
@@ -186,62 +231,160 @@ export const getAllFilms = async (
   next: NextFunction,
 ) => {
   try {
-    const allFilms = await db
-      .select({
-        id: films.id,
-        name: films.name,
-        description: films.description,
-        image: films.image,
-        releaseDate: films.releaseDate,
-        trailerUrl: films.trailerUrl,
-        filmUrl: films.filmUrl,
-        createdAt: films.createdAt,
-        isVisible: films.isVisible,
-      })
-      .from(films)
-      .orderBy(desc(films.createdAt));
+    const selectFields = getSelectFields();
 
-    // Для каждого фильма получаем жанры, актёров и рейтинг
-    const filmsWithDetails = await Promise.all(
-      allFilms.map(async (film) => {
-        // Жанры фильма
-        const filmGenresList = await db
-          .select({
-            id: genres.id,
-            name: genres.name,
-            icon: genres.icon,
-          })
-          .from(genres)
-          .innerJoin(filmGenres, eq(genres.id, filmGenres.genreId))
-          .where(eq(filmGenres.filmId, film.id));
+    // Парсинг параметров
+    const orderByClause = parseSortParams(req, selectFields);
+    const whereCondition = parseFilterParams(req, selectFields);
+    const pagination = parsePaginationParams(req);
 
-        // Актёры фильма (только видимые)
-        const filmActorsList = await db
-          .select({
-            id: actors.id,
-            name: actors.name,
-            image: actors.image,
-            birthday: actors.birthday,
-            description: actors.description,
-            role: filmActors.role,
-          })
-          .from(actors)
-          .innerJoin(filmActors, eq(actors.id, filmActors.actorId))
-          .where(eq(filmActors.filmId, film.id) && eq(actors.isVisible, true));
+    // Отдельно обрабатываем сортировку по рейтингу и фильтры по жанрам
+    let ratingSort: { desc: boolean } | null = null;
+    const genreFilters: number[] = [];
+    const queryKeys = Object.keys(req.query);
 
-        // Рейтинг фильма
-        const rating = await getFilmRating(film.id);
+    let sortId: string | undefined;
+    let sortDesc: string | undefined;
 
-        return {
-          ...film,
-          genres: filmGenresList,
-          actors: filmActorsList,
-          rating,
-        };
-      }),
-    );
+    queryKeys.forEach((key) => {
+      // Обрабатываем сортировку
+      const sortMatch = key.match(/^sort\[(\d+)\]\[(.+)\]$/);
+      if (sortMatch) {
+        const field = sortMatch[2];
+        if (field === 'id') {
+          sortId = req.query[key] as string;
+        } else if (field === 'desc') {
+          sortDesc = req.query[key] as string;
+        }
+      }
 
-    res.json(filmsWithDetails);
+      // Обрабатываем фильтры по жанрам
+      const filterMatch = key.match(/^filters\[(\d+)\]\[(.+)\]$/);
+      if (filterMatch) {
+        const field = filterMatch[2];
+        if (field === 'id' && req.query[key] === 'genres') {
+          // Ищем соответствующие значения жанров
+          const index = filterMatch[1];
+          const valueArrayKeys = queryKeys.filter((k) =>
+            k.startsWith(`filters[${index}][value][`),
+          );
+
+          valueArrayKeys.forEach((vKey) => {
+            genreFilters.push(Number(req.query[vKey]));
+          });
+        }
+      }
+    });
+
+    if (sortId === 'rating' && sortDesc !== undefined) {
+      ratingSort = { desc: sortDesc === 'true' };
+    }
+
+    // Базовый запрос
+    let baseQuery;
+    let finalWhereCondition = whereCondition;
+
+    if (genreFilters.length > 0 && ratingSort) {
+      // Если есть и фильтры по жанрам, и сортировка по рейтингу
+      baseQuery = db
+        .select({
+          ...selectFields,
+          avgRating: avg(reviews.rating),
+        })
+        .from(films)
+        .innerJoin(filmGenres, eq(films.id, filmGenres.filmId))
+        .leftJoin(
+          reviews,
+          and(eq(films.id, reviews.filmId), eq(reviews.isApproved, true)),
+        )
+        .groupBy(films.id, filmGenres.genreId);
+
+      const genreCondition = inArray(filmGenres.genreId, genreFilters);
+      finalWhereCondition = whereCondition
+        ? and(genreCondition, whereCondition)
+        : genreCondition;
+    } else if (genreFilters.length > 0) {
+      // Только фильтры по жанрам
+      baseQuery = db
+        .select(selectFields)
+        .from(films)
+        .innerJoin(filmGenres, eq(films.id, filmGenres.filmId));
+
+      const genreCondition = inArray(filmGenres.genreId, genreFilters);
+      finalWhereCondition = whereCondition
+        ? and(genreCondition, whereCondition)
+        : genreCondition;
+    } else if (ratingSort) {
+      // Только сортировка по рейтингу
+      baseQuery = db
+        .select({
+          ...selectFields,
+          avgRating: avg(reviews.rating),
+        })
+        .from(films)
+        .leftJoin(
+          reviews,
+          and(eq(films.id, reviews.filmId), eq(reviews.isApproved, true)),
+        )
+        .groupBy(films.id);
+    } else {
+      // Обычный запрос без JOIN
+      baseQuery = db.select(selectFields).from(films);
+    }
+
+    // Запрос данных с пагинацией
+    const filmsQuery = finalWhereCondition
+      ? baseQuery.where(finalWhereCondition)
+      : baseQuery;
+
+    let queryWithOrder;
+    if (ratingSort) {
+      // Сортировка по рейтингу
+      queryWithOrder = ratingSort.desc
+        ? filmsQuery.orderBy(desc(avg(reviews.rating)))
+        : filmsQuery.orderBy(avg(reviews.rating));
+    } else if (orderByClause) {
+      queryWithOrder = filmsQuery.orderBy(orderByClause);
+    } else {
+      queryWithOrder = filmsQuery.orderBy(desc(films.createdAt));
+    }
+
+    const allFilms = await queryWithOrder
+      .limit(pagination.limit)
+      .offset(pagination.offset);
+
+    // Запрос общего количества
+    let countQuery;
+    if (genreFilters.length > 0) {
+      countQuery = db
+        .select({ count: count() })
+        .from(films)
+        .innerJoin(filmGenres, eq(films.id, filmGenres.filmId));
+    } else {
+      countQuery = db.select({ count: count() }).from(films);
+    }
+
+    const totalCountResult = finalWhereCondition
+      ? await countQuery.where(finalWhereCondition)
+      : await countQuery;
+
+    const totalCount = totalCountResult[0]?.count || 0;
+    const totalPages = Math.ceil(totalCount / pagination.pageSize);
+
+    // Обогащаем данные жанрами, актёрами и рейтингом
+    const filmsWithDetails = await enrichFilmsWithDetails(allFilms);
+
+    res.json({
+      data: filmsWithDetails,
+      pagination: {
+        pageIndex: pagination.pageIndex,
+        pageSize: pagination.pageSize,
+        totalCount,
+        totalPages,
+        hasNextPage: pagination.pageIndex < totalPages - 1,
+        hasPreviousPage: pagination.pageIndex > 0,
+      },
+    });
   } catch (error) {
     next(error);
   }
@@ -290,6 +433,7 @@ export const getFilmById = async (
         birthday: actors.birthday,
         description: actors.description,
         role: filmActors.role,
+        createdAt: actors.createdAt,
       })
       .from(actors)
       .innerJoin(filmActors, eq(actors.id, filmActors.actorId))
@@ -585,60 +729,64 @@ export const searchFilms = async (
   next: NextFunction,
 ) => {
   try {
-    const { query } = req.query;
+    const selectFields = getSelectFields();
 
-    if (!query || typeof query !== 'string') {
-      res.status(400).json({ message: 'Параметр поиска обязателен' });
-      return;
+    // Парсинг параметров
+    const orderByClause = parseSortParams(req, selectFields);
+    const whereCondition = parseFilterParams(req, selectFields);
+    const pagination = parsePaginationParams(req);
+
+    // Базовые условия: видимые фильмы + поиск по имени если указан
+    const baseConditions = [eq(films.isVisible, true)];
+
+    const { query } = req.query;
+    if (query && typeof query === 'string') {
+      baseConditions.push(like(films.name, `%${query}%`));
     }
 
-    const searchResults = await db
-      .select()
+    const baseCondition = and(...baseConditions);
+
+    // Комбинируем с дополнительными фильтрами
+    const finalCondition = whereCondition
+      ? and(baseCondition, whereCondition)
+      : baseCondition;
+
+    // Базовый запрос
+    const baseQuery = db.select(selectFields).from(films);
+
+    // Запрос данных с пагинацией
+    const queryWithWhere = baseQuery.where(finalCondition);
+    const queryWithOrder = orderByClause
+      ? queryWithWhere.orderBy(orderByClause)
+      : queryWithWhere.orderBy(desc(films.createdAt));
+
+    const searchResults = await queryWithOrder
+      .limit(pagination.limit)
+      .offset(pagination.offset);
+
+    // Запрос общего количества
+    const totalCountResult = await db
+      .select({ count: count() })
       .from(films)
-      .where(like(films.name, `%${query}%`) && eq(films.isVisible, true))
-      .orderBy(desc(films.createdAt));
+      .where(finalCondition);
 
-    // Для каждого фильма получаем жанры, актёров и рейтинг
-    const filmsWithDetails = await Promise.all(
-      searchResults.map(async (film) => {
-        // Жанры фильма
-        const filmGenresList = await db
-          .select({
-            id: genres.id,
-            name: genres.name,
-            icon: genres.icon,
-          })
-          .from(genres)
-          .innerJoin(filmGenres, eq(genres.id, filmGenres.genreId))
-          .where(eq(filmGenres.filmId, film.id));
+    const totalCount = totalCountResult[0]?.count || 0;
+    const totalPages = Math.ceil(totalCount / pagination.pageSize);
 
-        // Актёры фильма (только видимые)
-        const filmActorsList = await db
-          .select({
-            id: actors.id,
-            name: actors.name,
-            image: actors.image,
-            birthday: actors.birthday,
-            description: actors.description,
-            role: filmActors.role,
-          })
-          .from(actors)
-          .innerJoin(filmActors, eq(actors.id, filmActors.actorId))
-          .where(eq(filmActors.filmId, film.id) && eq(actors.isVisible, true));
+    // Обогащаем данные жанрами, актёрами и рейтингом
+    const filmsWithDetails = await enrichFilmsWithDetails(searchResults);
 
-        // Рейтинг фильма
-        const rating = await getFilmRating(film.id);
-
-        return {
-          ...film,
-          genres: filmGenresList,
-          actors: filmActorsList,
-          rating,
-        };
-      }),
-    );
-
-    res.json(filmsWithDetails);
+    res.json({
+      data: filmsWithDetails,
+      pagination: {
+        pageIndex: pagination.pageIndex,
+        pageSize: pagination.pageSize,
+        totalCount,
+        totalPages,
+        hasNextPage: pagination.pageIndex < totalPages - 1,
+        hasPreviousPage: pagination.pageIndex > 0,
+      },
+    });
   } catch (error) {
     next(error);
   }

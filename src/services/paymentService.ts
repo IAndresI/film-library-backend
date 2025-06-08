@@ -201,8 +201,11 @@ export class PaymentService {
         startedAt: subscriptions.startedAt,
         expiresAt: subscriptions.expiresAt,
         autoRenew: subscriptions.autoRenew,
-        name: subscriptionPlans.name,
-        price: subscriptionPlans.price,
+        planId: subscriptions.planId,
+        planName: subscriptionPlans.name,
+        planPrice: subscriptionPlans.price,
+        planDurationDays: subscriptionPlans.durationDays,
+        planDescription: subscriptionPlans.description,
       })
       .from(subscriptions)
       .leftJoin(
@@ -213,7 +216,23 @@ export class PaymentService {
       .orderBy(desc(subscriptions.expiresAt))
       .limit(1);
 
-    return subscription[0] || null;
+    const result = subscription[0];
+    if (!result) return null;
+
+    return {
+      id: result.id,
+      status: result.status,
+      startedAt: result.startedAt,
+      expiresAt: result.expiresAt,
+      autoRenew: result.autoRenew,
+      plan: {
+        id: result.planId,
+        name: result.planName,
+        price: result.planPrice,
+        durationDays: result.planDurationDays,
+        description: result.planDescription,
+      },
+    };
   }
 
   // Обновляет статус истекших подписок для конкретного пользователя

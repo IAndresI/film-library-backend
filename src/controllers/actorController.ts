@@ -1,8 +1,13 @@
 import { Request, Response, NextFunction } from 'express';
-import { eq, desc, like } from 'drizzle-orm';
+import { eq, desc, like, and, count } from 'drizzle-orm';
 import { db } from '../db/connection';
 import { actors, filmActors, films } from '../schema';
 import { deleteFile } from '../utils/fileUtils';
+import {
+  parseSortParams,
+  parseFilterParams,
+  parsePaginationParams,
+} from '../utils/queryParser';
 
 // Получить всех видимых актёров
 export const getActors = async (
@@ -11,20 +16,59 @@ export const getActors = async (
   next: NextFunction,
 ) => {
   try {
-    const allActors = await db
-      .select({
-        id: actors.id,
-        name: actors.name,
-        image: actors.image,
-        birthday: actors.birthday,
-        description: actors.description,
-        isVisible: actors.isVisible,
-      })
-      .from(actors)
-      .where(eq(actors.isVisible, true))
-      .orderBy(desc(actors.id));
+    const selectFields = {
+      id: actors.id,
+      name: actors.name,
+      image: actors.image,
+      birthday: actors.birthday,
+      description: actors.description,
+      isVisible: actors.isVisible,
+      createdAt: actors.createdAt,
+    };
 
-    res.json(allActors);
+    // Парсинг параметров
+    const orderByClause = parseSortParams(req, selectFields);
+    const whereCondition = parseFilterParams(req, selectFields);
+    const pagination = parsePaginationParams(req);
+
+    // Базовое условие: только видимые актёры
+    const baseCondition = eq(actors.isVisible, true);
+
+    // Комбинируем с дополнительными фильтрами
+    const finalCondition = whereCondition
+      ? and(baseCondition, whereCondition)
+      : baseCondition;
+
+    // Базовый запрос
+    const baseQuery = db.select(selectFields).from(actors);
+
+    // Запрос данных с пагинацией
+    const allActors = await baseQuery
+      .where(finalCondition)
+      .orderBy(orderByClause)
+      .limit(pagination.limit)
+      .offset(pagination.offset);
+
+    // Запрос общего количества
+    const totalCountResult = await db
+      .select({ count: count() })
+      .from(actors)
+      .where(finalCondition);
+
+    const totalCount = totalCountResult[0]?.count || 0;
+    const totalPages = Math.ceil(totalCount / pagination.pageSize);
+
+    res.json({
+      data: allActors,
+      pagination: {
+        pageIndex: pagination.pageIndex,
+        pageSize: pagination.pageSize,
+        totalCount,
+        totalPages,
+        hasNextPage: pagination.pageIndex < totalPages - 1,
+        hasPreviousPage: pagination.pageIndex > 0,
+      },
+    });
   } catch (error) {
     next(error);
   }
@@ -37,19 +81,54 @@ export const getAllActors = async (
   next: NextFunction,
 ) => {
   try {
-    const allActors = await db
-      .select({
-        id: actors.id,
-        name: actors.name,
-        image: actors.image,
-        birthday: actors.birthday,
-        description: actors.description,
-        isVisible: actors.isVisible,
-      })
-      .from(actors)
-      .orderBy(desc(actors.id));
+    const selectFields = {
+      id: actors.id,
+      name: actors.name,
+      image: actors.image,
+      birthday: actors.birthday,
+      description: actors.description,
+      isVisible: actors.isVisible,
+      createdAt: actors.createdAt,
+    };
 
-    res.json(allActors);
+    // Парсинг параметров
+    const orderByClause = parseSortParams(req, selectFields);
+    const whereCondition = parseFilterParams(req, selectFields);
+    const pagination = parsePaginationParams(req);
+
+    // Базовый запрос
+    const baseQuery = db.select(selectFields).from(actors);
+
+    // Запрос данных с пагинацией
+    const actorsQuery = whereCondition
+      ? baseQuery.where(whereCondition)
+      : baseQuery;
+
+    const allActors = await actorsQuery
+      .orderBy(orderByClause)
+      .limit(pagination.limit)
+      .offset(pagination.offset);
+
+    // Запрос общего количества
+    const countQuery = db.select({ count: count() }).from(actors);
+    const totalCountResult = whereCondition
+      ? await countQuery.where(whereCondition)
+      : await countQuery;
+
+    const totalCount = totalCountResult[0]?.count || 0;
+    const totalPages = Math.ceil(totalCount / pagination.pageSize);
+
+    res.json({
+      data: allActors,
+      pagination: {
+        pageIndex: pagination.pageIndex,
+        pageSize: pagination.pageSize,
+        totalCount,
+        totalPages,
+        hasNextPage: pagination.pageIndex < totalPages - 1,
+        hasPreviousPage: pagination.pageIndex > 0,
+      },
+    });
   } catch (error) {
     next(error);
   }
@@ -281,20 +360,66 @@ export const searchActors = async (
   next: NextFunction,
 ) => {
   try {
-    const { query } = req.query;
+    const selectFields = {
+      id: actors.id,
+      name: actors.name,
+      image: actors.image,
+      birthday: actors.birthday,
+      description: actors.description,
+      isVisible: actors.isVisible,
+      createdAt: actors.createdAt,
+    };
 
-    if (!query || typeof query !== 'string') {
-      res.status(400).json({ message: 'Параметр поиска обязателен' });
-      return;
+    // Парсинг параметров
+    const orderByClause = parseSortParams(req, selectFields);
+    const whereCondition = parseFilterParams(req, selectFields);
+    const pagination = parsePaginationParams(req);
+
+    // Базовые условия: видимые актёры + поиск по имени если указан
+    const baseConditions = [eq(actors.isVisible, true)];
+
+    const { query } = req.query;
+    if (query && typeof query === 'string') {
+      baseConditions.push(like(actors.name, `%${query}%`));
     }
 
-    const searchResults = await db
-      .select()
-      .from(actors)
-      .where(like(actors.name, `%${query}%`) && eq(actors.isVisible, true))
-      .orderBy(desc(actors.id));
+    const baseCondition = and(...baseConditions);
 
-    res.json(searchResults);
+    // Комбинируем с дополнительными фильтрами
+    const finalCondition = whereCondition
+      ? and(baseCondition, whereCondition)
+      : baseCondition;
+
+    // Базовый запрос
+    const baseQuery = db.select(selectFields).from(actors);
+
+    // Запрос данных с пагинацией
+    const searchResults = await baseQuery
+      .where(finalCondition)
+      .orderBy(orderByClause)
+      .limit(pagination.limit)
+      .offset(pagination.offset);
+
+    // Запрос общего количества
+    const totalCountResult = await db
+      .select({ count: count() })
+      .from(actors)
+      .where(finalCondition);
+
+    const totalCount = totalCountResult[0]?.count || 0;
+    const totalPages = Math.ceil(totalCount / pagination.pageSize);
+
+    res.json({
+      data: searchResults,
+      pagination: {
+        pageIndex: pagination.pageIndex,
+        pageSize: pagination.pageSize,
+        totalCount,
+        totalPages,
+        hasNextPage: pagination.pageIndex < totalPages - 1,
+        hasPreviousPage: pagination.pageIndex > 0,
+      },
+    });
   } catch (error) {
     next(error);
   }

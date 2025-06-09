@@ -127,6 +127,74 @@ export const getApprovedReviews = async (
   }
 };
 
+// Получить отзывы по фильму
+export const getReviewsByFilm = async (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) => {
+  try {
+    const filmId = parseInt(req.params.filmId, 10);
+    const selectFields = getSelectFields();
+
+    // Парсинг параметров
+    const orderByClause = parseSortParams(req, selectFields);
+    const pagination = parsePaginationParams(req);
+
+    // Базовые условия: отзывы к конкретному фильму и только одобренные
+    const baseConditions = [
+      eq(reviews.filmId, filmId),
+      eq(reviews.isApproved, true),
+    ];
+
+    // Фильтр по статусу одобрения (только для админов, опционально)
+    const isApproved = req.query.isApproved;
+    if (isApproved !== undefined) {
+      // Убираем базовое условие одобрения и добавляем кастомное
+      baseConditions.pop(); // Удаляем eq(reviews.isApproved, true)
+      baseConditions.push(eq(reviews.isApproved, isApproved === 'true'));
+    }
+
+    const finalCondition = and(...baseConditions);
+
+    // Запрос данных с пагинацией
+    const reviewsData = await db
+      .select(selectFields)
+      .from(reviews)
+      .innerJoin(users, eq(reviews.userId, users.id))
+      .innerJoin(films, eq(reviews.filmId, films.id))
+      .where(finalCondition)
+      .orderBy(orderByClause || desc(reviews.createdAt))
+      .limit(pagination.limit)
+      .offset(pagination.offset);
+
+    // Запрос общего количества
+    const totalCountResult = await db
+      .select({ count: count() })
+      .from(reviews)
+      .innerJoin(users, eq(reviews.userId, users.id))
+      .innerJoin(films, eq(reviews.filmId, films.id))
+      .where(finalCondition);
+
+    const totalCount = totalCountResult[0]?.count || 0;
+    const totalPages = Math.ceil(totalCount / pagination.pageSize);
+
+    res.json({
+      data: mapReviewsData(reviewsData),
+      pagination: {
+        pageIndex: pagination.pageIndex,
+        pageSize: pagination.pageSize,
+        totalCount,
+        totalPages,
+        hasNextPage: pagination.pageIndex < totalPages - 1,
+        hasPreviousPage: pagination.pageIndex > 0,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 // Получить все отзывы (для админов)
 export const getAllReviews = async (
   req: Request,
@@ -277,6 +345,48 @@ export const createReview = async (
   }
 };
 
+// Редактировать отзыв
+export const updateReview = async (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const { rating, text } = req.body;
+
+    // Проверяем существование отзыва
+    const existingReview = await db
+      .select()
+      .from(reviews)
+      .where(eq(reviews.id, id))
+      .limit(1);
+
+    if (!existingReview[0]) {
+      res.status(404).json({ message: 'Отзыв не найден' });
+      return;
+    }
+
+    // Обновляем отзыв и сбрасываем статус одобрения для повторной модерации
+    const updatedReview = await db
+      .update(reviews)
+      .set({
+        rating,
+        text,
+        isApproved: false, // Требует повторной модерации после редактирования
+      })
+      .where(eq(reviews.id, id))
+      .returning();
+
+    res.json({
+      ...updatedReview[0],
+      message: 'Отзыв обновлён и отправлен на повторную модерацию',
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 // Одобрить отзыв
 export const approveReview = async (
   req: Request,
@@ -385,6 +495,37 @@ export const getUserReviews = async (
         hasPreviousPage: pagination.pageIndex > 0,
       },
     });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Получить отзыв пользователя об определённом фильме
+export const getUserFilmReview = async (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) => {
+  try {
+    const userId = parseInt(req.params.userId, 10);
+    const filmId = parseInt(req.params.filmId, 10);
+    const selectFields = getSelectFields();
+
+    // Запрос отзыва конкретного пользователя о конкретном фильме
+    const reviewData = await db
+      .select(selectFields)
+      .from(reviews)
+      .innerJoin(users, eq(reviews.userId, users.id))
+      .innerJoin(films, eq(reviews.filmId, films.id))
+      .where(and(eq(reviews.userId, userId), eq(reviews.filmId, filmId)))
+      .limit(1);
+
+    if (!reviewData[0]) {
+      res.status(404).json({ message: 'Отзыв не найден' });
+      return;
+    }
+
+    res.json(mapReviewsData(reviewData)[0]);
   } catch (error) {
     next(error);
   }

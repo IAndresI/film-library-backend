@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
-import { eq, desc, like, avg, and, count, inArray } from 'drizzle-orm';
+import { eq, desc, like, avg, and, count, inArray, ilike } from 'drizzle-orm';
 import { db } from '../db/connection';
 import {
   films,
@@ -22,7 +22,7 @@ import {
   parsePaginationParams,
 } from '../utils/queryParser';
 
-// Получить все видимые фильмы (с опциональной фильтрацией по жанру)
+// Получить все видимые фильмы
 export const getFilms = async (
   req: Request,
   res: Response,
@@ -33,25 +33,77 @@ export const getFilms = async (
 
     // Парсинг параметров
     const orderByClause = parseSortParams(req, selectFields);
-    const whereCondition = parseFilterParams(req, selectFields);
     const pagination = parsePaginationParams(req);
 
-    // Базовое условие: только видимые фильмы
-    const baseCondition = eq(films.isVisible, true);
+    // Обработка параметров фильтрации
+    const searchQuery = req.query.search || req.query.query;
 
-    // Комбинируем с дополнительными фильтрами
-    const finalCondition = whereCondition
-      ? and(baseCondition, whereCondition)
-      : baseCondition;
+    // Обработка жанров - может прийти как 'genres[]' или 'genres'
+    let genreIds: string[] = [];
+    if (req.query['genres[]']) {
+      genreIds = Array.isArray(req.query['genres[]'])
+        ? (req.query['genres[]'] as string[])
+        : [req.query['genres[]'] as string];
+    } else if (req.query.genres) {
+      genreIds = Array.isArray(req.query.genres)
+        ? (req.query.genres as string[])
+        : [req.query.genres as string];
+    }
 
-    // Базовый запрос
-    const baseQuery = db.select(selectFields).from(films);
+    // Обработка актёров - может прийти как 'actors[]' или 'actors'
+    let actorIds: string[] = [];
+    if (req.query['actors[]']) {
+      actorIds = Array.isArray(req.query['actors[]'])
+        ? (req.query['actors[]'] as string[])
+        : [req.query['actors[]'] as string];
+    } else if (req.query.actors) {
+      actorIds = Array.isArray(req.query.actors)
+        ? (req.query.actors as string[])
+        : [req.query.actors as string];
+    }
+
+    // Базовые условия
+    const baseConditions = [eq(films.isVisible, true)];
+
+    // Поиск по названию фильма
+    if (searchQuery && typeof searchQuery === 'string') {
+      baseConditions.push(ilike(films.name, `%${searchQuery}%`));
+    }
+
+    // Фильтр по жанрам
+    if (genreIds.length > 0) {
+      const filmIdsWithGenres = db
+        .selectDistinct({ filmId: filmGenres.filmId })
+        .from(filmGenres)
+        .where(inArray(filmGenres.genreId, genreIds.map(Number)));
+
+      baseConditions.push(inArray(films.id, filmIdsWithGenres));
+    }
+
+    // Фильтр по актёрам
+    if (actorIds.length > 0) {
+      const filmIdsWithActors = db
+        .selectDistinct({ filmId: filmActors.filmId })
+        .from(filmActors)
+        .where(inArray(filmActors.actorId, actorIds.map(Number)));
+
+      baseConditions.push(inArray(films.id, filmIdsWithActors));
+    }
+
+    const finalCondition = and(...baseConditions);
 
     // Запрос данных с пагинацией
-    const queryWithWhere = baseQuery.where(finalCondition);
     const queryWithOrder = orderByClause
-      ? queryWithWhere.orderBy(orderByClause)
-      : queryWithWhere.orderBy(desc(films.createdAt));
+      ? db
+          .select(selectFields)
+          .from(films)
+          .where(finalCondition)
+          .orderBy(orderByClause)
+      : db
+          .select(selectFields)
+          .from(films)
+          .where(finalCondition)
+          .orderBy(desc(films.createdAt));
 
     const allFilms = await queryWithOrder
       .limit(pagination.limit)

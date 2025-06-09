@@ -8,6 +8,7 @@ import {
   getUserFavorites,
   addToFavorites,
   removeFromFavorites,
+  checkFavoriteStatus,
   getUserWatchHistory,
 } from '../controllers/userController';
 import { uploadUserAvatar } from '../middlewares/upload';
@@ -23,6 +24,7 @@ router.delete('/:id', deleteUser);
 
 // Избранное
 router.get('/:id/favorites', getUserFavorites);
+router.get('/:id/favorites/:filmId', checkFavoriteStatus);
 router.post('/:id/favorites', addToFavorites);
 router.delete('/:id/favorites/:filmId', removeFromFavorites);
 

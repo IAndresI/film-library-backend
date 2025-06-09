@@ -1,20 +1,17 @@
 import { Request, Response, NextFunction } from 'express';
-import { eq, desc, and, count, avg } from 'drizzle-orm';
+import { eq, desc, and, count, inArray, ilike } from 'drizzle-orm';
 import { db } from '../db/connection';
 import {
   users,
   userFavorites,
   films,
   watchHistory,
-  genres,
-  actors,
   filmGenres,
   filmActors,
-  reviews,
 } from '../schema';
 import { deleteFile } from '../utils/fileUtils';
 import { paymentService } from '../services/paymentService';
-import { getFilmRating, enrichFilmsWithDetails } from '../utils/filmUtils';
+import { enrichFilmsWithDetails } from '../utils/filmUtils';
 import {
   parseSortParams,
   parseFilterParams,
@@ -251,7 +248,42 @@ export const getUserFavorites = async (
   try {
     const userId = parseInt(req.params.id, 10);
 
-    const favorites = await db
+    // Обработка параметров запроса
+    const searchQuery = req.query.search || req.query.query;
+
+    // Обработка жанров - может прийти как 'genres[]' или 'genres'
+    let genreIds: string[] = [];
+    if (req.query['genres[]']) {
+      genreIds = Array.isArray(req.query['genres[]'])
+        ? (req.query['genres[]'] as string[])
+        : [req.query['genres[]'] as string];
+    } else if (req.query.genres) {
+      genreIds = Array.isArray(req.query.genres)
+        ? (req.query.genres as string[])
+        : [req.query.genres as string];
+    }
+
+    // Обработка актёров - может прийти как 'actors[]' или 'actors'
+    let actorIds: string[] = [];
+    if (req.query['actors[]']) {
+      actorIds = Array.isArray(req.query['actors[]'])
+        ? (req.query['actors[]'] as string[])
+        : [req.query['actors[]'] as string];
+    } else if (req.query.actors) {
+      actorIds = Array.isArray(req.query.actors)
+        ? (req.query.actors as string[])
+        : [req.query.actors as string];
+    }
+
+    // Базовые условия
+    const baseConditions = [eq(userFavorites.userId, userId)];
+
+    // Поиск по названию фильма
+    if (searchQuery && typeof searchQuery === 'string') {
+      baseConditions.push(ilike(films.name, `%${searchQuery}%`));
+    }
+
+    let baseQuery = db
       .select({
         id: films.id,
         name: films.name,
@@ -265,8 +297,31 @@ export const getUserFavorites = async (
         addedAt: userFavorites.createdAt,
       })
       .from(films)
-      .innerJoin(userFavorites, eq(films.id, userFavorites.filmId))
-      .where(eq(userFavorites.userId, userId))
+      .innerJoin(userFavorites, eq(films.id, userFavorites.filmId));
+
+    // Фильтр по жанрам
+    if (genreIds.length > 0) {
+      baseQuery = baseQuery.innerJoin(
+        filmGenres,
+        eq(films.id, filmGenres.filmId),
+      );
+      baseConditions.push(inArray(filmGenres.genreId, genreIds.map(Number)));
+    }
+
+    // Фильтр по актёрам
+    if (actorIds.length > 0) {
+      baseQuery = baseQuery.innerJoin(
+        filmActors,
+        eq(films.id, filmActors.filmId),
+      );
+      baseConditions.push(inArray(filmActors.actorId, actorIds.map(Number)));
+    }
+
+    const finalCondition = and(...baseConditions);
+
+    const favorites = await baseQuery
+      .where(finalCondition)
+      .groupBy(films.id, userFavorites.createdAt)
       .orderBy(desc(userFavorites.createdAt));
 
     // Обогащаем данные жанрами, актёрами и рейтингом
@@ -294,6 +349,34 @@ export const addToFavorites = async (
       .returning();
 
     res.status(201).json(newFavorite[0]);
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Проверить, находится ли фильм в избранном у пользователя
+export const checkFavoriteStatus = async (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) => {
+  try {
+    const userId = parseInt(req.params.id, 10);
+    const filmId = parseInt(req.params.filmId, 10);
+
+    const favorite = await db
+      .select()
+      .from(userFavorites)
+      .where(
+        and(eq(userFavorites.userId, userId), eq(userFavorites.filmId, filmId)),
+      )
+      .limit(1);
+
+    res.json({
+      isFavorite: !!favorite[0],
+      filmId,
+      userId,
+    });
   } catch (error) {
     next(error);
   }

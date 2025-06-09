@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
-import { eq, desc, like, and, count, avg } from 'drizzle-orm';
+import { eq, desc, like, and, count, inArray, ilike } from 'drizzle-orm';
 import { db } from '../db/connection';
 import {
   actors,
@@ -10,7 +10,7 @@ import {
   reviews,
 } from '../schema';
 import { deleteFile } from '../utils/fileUtils';
-import { getFilmRating, enrichFilmsWithDetails } from '../utils/filmUtils';
+import { enrichFilmsWithDetails } from '../utils/filmUtils';
 import {
   parseSortParams,
   parseFilterParams,
@@ -36,22 +36,47 @@ export const getActors = async (
 
     // Парсинг параметров
     const orderByClause = parseSortParams(req, selectFields);
-    const whereCondition = parseFilterParams(req, selectFields);
     const pagination = parsePaginationParams(req);
 
-    // Базовое условие: только видимые актёры
-    const baseCondition = eq(actors.isVisible, true);
+    // Обработка параметров фильтрации
+    const searchQuery = req.query.search;
 
-    // Комбинируем с дополнительными фильтрами
-    const finalCondition = whereCondition
-      ? and(baseCondition, whereCondition)
-      : baseCondition;
+    // Обработка фильмов - может прийти как 'films[]' или 'films'
+    let filmIds: string[] = [];
+    if (req.query['films[]']) {
+      filmIds = Array.isArray(req.query['films[]'])
+        ? (req.query['films[]'] as string[])
+        : [req.query['films[]'] as string];
+    } else if (req.query.films) {
+      filmIds = Array.isArray(req.query.films)
+        ? (req.query.films as string[])
+        : [req.query.films as string];
+    }
 
-    // Базовый запрос
-    const baseQuery = db.select(selectFields).from(actors);
+    // Базовые условия
+    const baseConditions = [eq(actors.isVisible, true)];
+
+    // Поиск по имени актёра
+    if (searchQuery && typeof searchQuery === 'string') {
+      baseConditions.push(ilike(actors.name, `%${searchQuery}%`));
+    }
+
+    // Фильтр по фильмам (актёры, которые снимались в конкретных фильмах)
+    if (filmIds.length > 0) {
+      const actorIdsInFilms = db
+        .selectDistinct({ actorId: filmActors.actorId })
+        .from(filmActors)
+        .where(inArray(filmActors.filmId, filmIds.map(Number)));
+
+      baseConditions.push(inArray(actors.id, actorIdsInFilms));
+    }
+
+    const finalCondition = and(...baseConditions);
 
     // Запрос данных с пагинацией
-    const allActors = await baseQuery
+    const allActors = await db
+      .select(selectFields)
+      .from(actors)
       .where(finalCondition)
       .orderBy(orderByClause)
       .limit(pagination.limit)
@@ -62,7 +87,6 @@ export const getActors = async (
       .select({ count: count() })
       .from(actors)
       .where(finalCondition);
-
     const totalCount = totalCountResult[0]?.count || 0;
     const totalPages = Math.ceil(totalCount / pagination.pageSize);
 

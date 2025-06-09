@@ -1,21 +1,25 @@
 import { Router } from 'express';
 import {
-  getApprovedReviews,
   getAllReviews,
   getPendingReviews,
   getUserReviews,
+  getUserFilmReview,
   createReview,
+  updateReview,
   approveReview,
   rejectReview,
   deleteReview,
+  getReviewsByFilm,
 } from '../controllers/reviewController';
 
 const router = Router();
 
 // Публичные роуты
-router.get('/film/:filmId', getApprovedReviews);
+router.get('/film/:filmId', getReviewsByFilm);
 router.get('/user/:userId', getUserReviews);
+router.get('/user/:userId/film/:filmId', getUserFilmReview);
 router.post('/', createReview);
+router.put('/:id', updateReview);
 
 // Админские роуты
 router.get('/', getAllReviews);

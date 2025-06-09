@@ -6,6 +6,7 @@ import userRoutes from './routes/userRoutes';
 import reviewRoutes from './routes/reviewRoutes';
 import orderRoutes from './routes/orderRoutes';
 import actorRoutes from './routes/actorRoutes';
+import filterRoutes from './routes/filterRoutes';
 import { errorHandler } from './middlewares/errorHandler';
 import authRoutes from './routes/authRoutes';
 import paymentRoutes from './routes/paymentRoutes';
@@ -35,6 +36,7 @@ app.use('/api/users', userRoutes);
 app.use('/api/reviews', reviewRoutes);
 app.use('/api/orders', orderRoutes);
 app.use('/api/actors', actorRoutes);
+app.use('/api/filters', filterRoutes);
 app.use('/api/auth', authRoutes);
 
 // Global error handler (should be after routes)

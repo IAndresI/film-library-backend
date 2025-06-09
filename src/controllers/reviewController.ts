@@ -329,6 +329,67 @@ export const rejectReview = async (
   }
 };
 
+// Получить все отзывы пользователя
+export const getUserReviews = async (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) => {
+  try {
+    const userId = parseInt(req.params.userId, 10);
+    const selectFields = getSelectFields();
+
+    // Парсинг параметров
+    const orderByClause = parseSortParams(req, selectFields);
+    const whereCondition = parseFilterParams(req, selectFields);
+    const pagination = parsePaginationParams(req);
+
+    // Базовое условие: отзывы конкретного пользователя
+    const baseCondition = eq(reviews.userId, userId);
+
+    // Комбинируем с дополнительными фильтрами
+    const finalCondition = whereCondition
+      ? and(baseCondition, whereCondition)
+      : baseCondition;
+
+    // Запрос данных с пагинацией
+    const reviewsData = await db
+      .select(selectFields)
+      .from(reviews)
+      .innerJoin(users, eq(reviews.userId, users.id))
+      .innerJoin(films, eq(reviews.filmId, films.id))
+      .where(finalCondition)
+      .orderBy(orderByClause || desc(reviews.createdAt))
+      .limit(pagination.limit)
+      .offset(pagination.offset);
+
+    // Запрос общего количества
+    const totalCountResult = await db
+      .select({ count: count() })
+      .from(reviews)
+      .innerJoin(users, eq(reviews.userId, users.id))
+      .innerJoin(films, eq(reviews.filmId, films.id))
+      .where(finalCondition);
+
+    const totalCount = totalCountResult[0]?.count || 0;
+    const totalPages = Math.ceil(totalCount / pagination.pageSize);
+
+    res.json({
+      data: mapReviewsData(reviewsData),
+      pagination: {
+        pageIndex: pagination.pageIndex,
+        pageSize: pagination.pageSize,
+        totalCount,
+        totalPages,
+        hasNextPage: pagination.pageIndex < totalPages - 1,
+        hasPreviousPage: pagination.pageIndex > 0,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 // Удалить отзыв
 export const deleteReview = async (
   req: Request,

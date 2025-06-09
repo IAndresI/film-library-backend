@@ -101,7 +101,7 @@ export const orders = pgTable('orders', {
   planId: integer('plan_id').references(() => subscriptionPlans.id),
   amount: decimal('amount', { precision: 10, scale: 2 }).notNull(),
   currency: varchar('currency', { length: 3 }).default('RUB'),
-  status: varchar('status', { length: 20 }).default('pending'), // pending, paid, failed, cancelled
+  orderStatus: varchar('order_status', { length: 20 }).default('pending'), // pending, paid, failed, cancelled
   paymentMethod: varchar('payment_method', { length: 50 }),
   externalPaymentId: varchar('external_payment_id', { length: 255 }),
   metadata: jsonb('metadata'),
@@ -118,7 +118,9 @@ export const subscriptions = pgTable('subscriptions', {
   }),
   planId: integer('plan_id').references(() => subscriptionPlans.id),
   orderId: integer('order_id').references(() => orders.id),
-  status: varchar('status', { length: 20 }).default('active'), // active, expired, cancelled
+  subscriptionStatus: varchar('subscription_status', { length: 20 }).default(
+    'active',
+  ), // active, expired, cancelled
   startedAt: timestamp('started_at').defaultNow(),
   expiresAt: timestamp('expires_at').notNull(),
   autoRenew: boolean('auto_renew').default(false),

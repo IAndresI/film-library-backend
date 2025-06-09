@@ -3,6 +3,7 @@ import {
   getApprovedReviews,
   getAllReviews,
   getPendingReviews,
+  getUserReviews,
   createReview,
   approveReview,
   rejectReview,
@@ -13,6 +14,7 @@ const router = Router();
 
 // Публичные роуты
 router.get('/film/:filmId', getApprovedReviews);
+router.get('/user/:userId', getUserReviews);
 router.post('/', createReview);
 
 // Админские роуты

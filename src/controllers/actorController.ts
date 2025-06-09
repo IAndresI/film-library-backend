@@ -1,8 +1,16 @@
 import { Request, Response, NextFunction } from 'express';
-import { eq, desc, like, and, count } from 'drizzle-orm';
+import { eq, desc, like, and, count, avg } from 'drizzle-orm';
 import { db } from '../db/connection';
-import { actors, filmActors, films } from '../schema';
+import {
+  actors,
+  filmActors,
+  films,
+  genres,
+  filmGenres,
+  reviews,
+} from '../schema';
 import { deleteFile } from '../utils/fileUtils';
+import { getFilmRating, enrichFilmsWithDetails } from '../utils/filmUtils';
 import {
   parseSortParams,
   parseFilterParams,
@@ -160,8 +168,12 @@ export const getActorByIdAdmin = async (
       .select({
         id: films.id,
         name: films.name,
+        description: films.description,
         image: films.image,
         releaseDate: films.releaseDate,
+        trailerUrl: films.trailerUrl,
+        filmUrl: films.filmUrl,
+        createdAt: films.createdAt,
         isVisible: films.isVisible,
         role: filmActors.role,
       })
@@ -170,9 +182,12 @@ export const getActorByIdAdmin = async (
       .where(eq(filmActors.actorId, id))
       .orderBy(desc(films.releaseDate));
 
+    // Обогащаем данные фильмов жанрами, актёрами и рейтингом
+    const enrichedFilms = await enrichFilmsWithDetails(actorFilms);
+
     const result = {
       ...actor[0],
-      films: actorFilms,
+      films: enrichedFilms,
     };
 
     res.json(result);
@@ -213,18 +228,26 @@ export const getActorById = async (
       .select({
         id: films.id,
         name: films.name,
+        description: films.description,
         image: films.image,
         releaseDate: films.releaseDate,
+        trailerUrl: films.trailerUrl,
+        filmUrl: films.filmUrl,
+        createdAt: films.createdAt,
+        isVisible: films.isVisible,
         role: filmActors.role,
       })
       .from(films)
       .innerJoin(filmActors, eq(films.id, filmActors.filmId))
-      .where(eq(filmActors.actorId, id) && eq(films.isVisible, true))
+      .where(and(eq(filmActors.actorId, id), eq(films.isVisible, true)))
       .orderBy(desc(films.releaseDate));
+
+    // Обогащаем данные фильмов жанрами, актёрами и рейтингом
+    const enrichedFilms = await enrichFilmsWithDetails(actorFilms);
 
     const result = {
       ...actor[0],
-      films: actorFilms,
+      films: enrichedFilms,
     };
 
     res.json(result);
@@ -287,10 +310,24 @@ export const updateActor = async (
       return;
     }
 
-    // Получаем путь к загруженному изображению
-    let image = req.body.image; // URL из поля формы если есть
+    // Обработка изображения
+    let image = req.body.image;
+
     if (req.file) {
+      // Загружен новый файл - удаляем старое изображение и сохраняем новое
+      if (existingActor[0].image) {
+        deleteFile(existingActor[0].image);
+      }
       image = `/${req.file.path.replace(/\\/g, '/')}`;
+    } else if (image === 'null') {
+      // Если передано "null", удаляем текущее изображение
+      if (existingActor[0].image) {
+        deleteFile(existingActor[0].image);
+      }
+      image = null;
+    } else if (image === undefined) {
+      // Если поле не передано, оставляем текущее значение
+      image = existingActor[0].image;
     }
 
     const updatedActor = await db
@@ -304,11 +341,6 @@ export const updateActor = async (
       })
       .where(eq(actors.id, id))
       .returning();
-
-    // Удаляем старое изображение если загружалось новое
-    if (req.file && existingActor[0].image) {
-      deleteFile(existingActor[0].image);
-    }
 
     res.json(updatedActor[0]);
   } catch (error) {

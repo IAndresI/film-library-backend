@@ -12,78 +12,15 @@ import {
 } from '../schema';
 import { deleteFile } from '../utils/fileUtils';
 import {
+  getFilmRating,
+  enrichFilmsWithDetails,
+  getFilmSelectFields,
+} from '../utils/filmUtils';
+import {
   parseSortParams,
   parseFilterParams,
   parsePaginationParams,
 } from '../utils/queryParser';
-
-// Общий селект объект для всех запросов
-const getSelectFields = () => ({
-  id: films.id,
-  name: films.name,
-  description: films.description,
-  image: films.image,
-  releaseDate: films.releaseDate,
-  trailerUrl: films.trailerUrl,
-  filmUrl: films.filmUrl,
-  createdAt: films.createdAt,
-  isVisible: films.isVisible,
-});
-
-// Общая функция для обогащения данных фильмов жанрами, актёрами и рейтингом
-const enrichFilmsWithDetails = async (filmsData: any[]) => {
-  return Promise.all(
-    filmsData.map(async (film) => {
-      // Жанры фильма
-      const filmGenresList = await db
-        .select({
-          id: genres.id,
-          name: genres.name,
-          icon: genres.icon,
-        })
-        .from(genres)
-        .innerJoin(filmGenres, eq(genres.id, filmGenres.genreId))
-        .where(eq(filmGenres.filmId, film.id));
-
-      // Актёры фильма (только видимые)
-      const filmActorsList = await db
-        .select({
-          id: actors.id,
-          name: actors.name,
-          image: actors.image,
-          birthday: actors.birthday,
-          description: actors.description,
-          role: filmActors.role,
-          createdAt: actors.createdAt,
-        })
-        .from(actors)
-        .innerJoin(filmActors, eq(actors.id, filmActors.actorId))
-        .where(and(eq(filmActors.filmId, film.id), eq(actors.isVisible, true)));
-
-      // Рейтинг фильма
-      const rating = await getFilmRating(film.id);
-
-      return {
-        ...film,
-        genres: filmGenresList,
-        actors: filmActorsList,
-        rating,
-      };
-    }),
-  );
-};
-
-// Функция для получения рейтинга фильма
-const getFilmRating = async (filmId: number): Promise<number | null> => {
-  const ratingResult = await db
-    .select({
-      avgRating: avg(reviews.rating),
-    })
-    .from(reviews)
-    .where(and(eq(reviews.filmId, filmId), eq(reviews.isApproved, true)));
-
-  return ratingResult[0]?.avgRating ? Number(ratingResult[0].avgRating) : null;
-};
 
 // Получить все видимые фильмы (с опциональной фильтрацией по жанру)
 export const getFilms = async (
@@ -92,7 +29,7 @@ export const getFilms = async (
   next: NextFunction,
 ) => {
   try {
-    const selectFields = getSelectFields();
+    const selectFields = getFilmSelectFields();
 
     // Парсинг параметров
     const orderByClause = parseSortParams(req, selectFields);
@@ -231,7 +168,7 @@ export const getAllFilms = async (
   next: NextFunction,
 ) => {
   try {
-    const selectFields = getSelectFields();
+    const selectFields = getFilmSelectFields();
 
     // Парсинг параметров
     const orderByClause = parseSortParams(req, selectFields);
@@ -643,25 +580,46 @@ export const updateFilmMedia = async (
       return;
     }
 
-    let trailerUrl = req.body.trailerUrl;
-    let filmUrl = req.body.filmUrl;
+    let trailerUrl = req.body.trailerFile;
+    let filmUrl = req.body.filmFile;
 
     // Получаем пути к загруженным видео файлам
     const files = req.files as { [fieldname: string]: Express.Multer.File[] };
 
+    // Обработка trailerUrl
     if (files?.trailerFile?.[0]) {
       // Удаляем старый трейлер если загружается новый
       if (existingFilm[0].trailerUrl) {
         deleteFile(existingFilm[0].trailerUrl);
       }
       trailerUrl = `/${files.trailerFile[0].path.replace(/\\/g, '/')}`;
+    } else if (trailerUrl === 'null') {
+      // Если передано "null", удаляем текущий трейлер
+      if (existingFilm[0].trailerUrl) {
+        deleteFile(existingFilm[0].trailerUrl);
+      }
+      trailerUrl = null;
+    } else if (trailerUrl === undefined) {
+      // Если поле не передано, оставляем текущее значение
+      trailerUrl = existingFilm[0].trailerUrl;
     }
+
+    // Обработка filmUrl
     if (files?.filmFile?.[0]) {
       // Удаляем старое видео фильма если загружается новое
       if (existingFilm[0].filmUrl) {
         deleteFile(existingFilm[0].filmUrl);
       }
       filmUrl = `/${files.filmFile[0].path.replace(/\\/g, '/')}`;
+    } else if (filmUrl === 'null') {
+      // Если передано "null", удаляем текущее видео
+      if (existingFilm[0].filmUrl) {
+        deleteFile(existingFilm[0].filmUrl);
+      }
+      filmUrl = null;
+    } else if (filmUrl === undefined) {
+      // Если поле не передано, оставляем текущее значение
+      filmUrl = existingFilm[0].filmUrl;
     }
 
     const updatedFilm = await db
@@ -729,7 +687,7 @@ export const searchFilms = async (
   next: NextFunction,
 ) => {
   try {
-    const selectFields = getSelectFields();
+    const selectFields = getFilmSelectFields();
 
     // Парсинг параметров
     const orderByClause = parseSortParams(req, selectFields);

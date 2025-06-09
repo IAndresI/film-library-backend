@@ -15,7 +15,7 @@ const getSelectFields = () => ({
   userId: subscriptions.userId,
   planId: subscriptions.planId,
   orderId: subscriptions.orderId,
-  status: subscriptions.status,
+  subscriptionStatus: subscriptions.subscriptionStatus,
   startedAt: subscriptions.startedAt,
   expiresAt: subscriptions.expiresAt,
   autoRenew: subscriptions.autoRenew,
@@ -40,7 +40,7 @@ const mapSubscriptionsData = (subscriptionsData: any[]) =>
     userId: subscription.userId,
     planId: subscription.planId,
     orderId: subscription.orderId,
-    status: subscription.status,
+    subscriptionStatus: subscription.subscriptionStatus,
     startedAt: subscription.startedAt,
     expiresAt: subscription.expiresAt,
     autoRenew: subscription.autoRenew,
@@ -199,11 +199,11 @@ export const createManualSubscription = async (req: Request, res: Response) => {
     // Отключаем текущие активные подписки пользователя
     await db
       .update(subscriptions)
-      .set({ status: 'cancelled' })
+      .set({ subscriptionStatus: 'cancelled' })
       .where(
         and(
           eq(subscriptions.userId, userId),
-          eq(subscriptions.status, 'active'),
+          eq(subscriptions.subscriptionStatus, 'active'),
         ),
       );
 
@@ -217,7 +217,7 @@ export const createManualSubscription = async (req: Request, res: Response) => {
         userId,
         planId,
         orderId: null, // Ручная подписка без orderId
-        status: 'active',
+        subscriptionStatus: 'active',
         startedAt: new Date(),
         expiresAt,
         autoRenew: false,
@@ -258,7 +258,7 @@ export const invalidateSubscription = async (req: Request, res: Response) => {
       .where(
         and(
           eq(subscriptions.userId, parseInt(userId)),
-          eq(subscriptions.status, 'active'),
+          eq(subscriptions.subscriptionStatus, 'active'),
         ),
       )
       .limit(1);
@@ -275,7 +275,7 @@ export const invalidateSubscription = async (req: Request, res: Response) => {
     const invalidatedSubscription = await db
       .update(subscriptions)
       .set({
-        status: 'cancelled',
+        subscriptionStatus: 'cancelled',
         expiresAt: new Date(), // Устанавливаем срок истечения на текущее время
       })
       .where(eq(subscriptions.id, activeSubscription[0].id))

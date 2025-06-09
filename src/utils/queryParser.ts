@@ -130,7 +130,10 @@ export function parseFilterParams(
                 filter.value.map((v: string) => v === 'true'),
               ),
             );
-          } else if (filter.id === 'status') {
+          } else if (
+            filter.id === 'orderStatus' ||
+            filter.id === 'subscriptionStatus'
+          ) {
             // Для строковых enum полей (status, orderId)
             whereConditions.push(inArray(field, filter.value));
           } else {

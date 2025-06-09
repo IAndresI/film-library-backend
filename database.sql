@@ -83,7 +83,7 @@ CREATE TABLE orders (
     plan_id INTEGER REFERENCES subscription_plans(id),
     amount DECIMAL(10,2) NOT NULL,
     currency VARCHAR(3) DEFAULT 'RUB',
-    status VARCHAR(20) DEFAULT 'pending', -- pending, paid, failed, cancelled
+    order_status VARCHAR(20) DEFAULT 'pending', -- pending, paid, failed, cancelled
     payment_method VARCHAR(50), -- bank_card, sbp, wallet, etc
     external_payment_id VARCHAR(255), -- ID платежа в YooKassa
     metadata JSONB, -- дополнительные данные от платежной системы
@@ -98,7 +98,7 @@ CREATE TABLE subscriptions (
     user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
     plan_id INTEGER REFERENCES subscription_plans(id),
     order_id INTEGER REFERENCES orders(id),
-    status VARCHAR(20) DEFAULT 'active', -- active, expired, cancelled
+    subscription_status VARCHAR(20) DEFAULT 'active', -- active, expired, cancelled
     started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     expires_at TIMESTAMP NOT NULL,
     auto_renew BOOLEAN DEFAULT FALSE,
@@ -144,12 +144,12 @@ CREATE INDEX idx_reviews_film_id ON reviews(film_id);
 CREATE INDEX idx_reviews_user_id ON reviews(user_id);
 CREATE INDEX idx_reviews_approved ON reviews(is_approved);
 CREATE INDEX idx_orders_user_id ON orders(user_id);
-CREATE INDEX idx_orders_status ON orders(status);
+CREATE INDEX idx_orders_status ON orders(order_status);
 CREATE INDEX idx_orders_external_id ON orders(external_payment_id);
 CREATE INDEX idx_orders_expires_at ON orders(expires_at);
 CREATE INDEX idx_subscriptions_user_id ON subscriptions(user_id);
 CREATE INDEX idx_subscriptions_expires_at ON subscriptions(expires_at);
-CREATE INDEX idx_subscriptions_status ON subscriptions(status);
+CREATE INDEX idx_subscriptions_status ON subscriptions(subscription_status);
 CREATE INDEX idx_watch_history_user_id ON watch_history(user_id);
 CREATE INDEX idx_watch_history_film_id ON watch_history(film_id);
 CREATE INDEX idx_users_email ON users(email);

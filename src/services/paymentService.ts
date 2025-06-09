@@ -55,7 +55,7 @@ export class PaymentService {
           planId,
           amount: selectedPlan.price,
           currency: selectedPlan.currency,
-          status: 'pending',
+          orderStatus: 'pending',
           expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000), // заказ истекает через 24 часа
         })
         .returning();
@@ -138,7 +138,7 @@ export class PaymentService {
           orderStatus = 'failed';
       }
 
-      updateData.status = orderStatus;
+      updateData.orderStatus = orderStatus;
 
       await db
         .update(orders)
@@ -162,7 +162,7 @@ export class PaymentService {
             userId,
             planId,
             orderId,
-            status: 'active',
+            subscriptionStatus: 'active',
             startedAt: startDate,
             expiresAt: endDate,
           });
@@ -197,7 +197,7 @@ export class PaymentService {
     const subscription = await db
       .select({
         id: subscriptions.id,
-        status: subscriptions.status,
+        subscriptionStatus: subscriptions.subscriptionStatus,
         startedAt: subscriptions.startedAt,
         expiresAt: subscriptions.expiresAt,
         autoRenew: subscriptions.autoRenew,
@@ -221,7 +221,7 @@ export class PaymentService {
 
     return {
       id: result.id,
-      status: result.status,
+      subscriptionStatus: result.subscriptionStatus,
       startedAt: result.startedAt,
       expiresAt: result.expiresAt,
       autoRenew: result.autoRenew,
@@ -241,18 +241,18 @@ export class PaymentService {
 
     const whereCondition = userId
       ? and(
-          eq(subscriptions.status, 'active'),
+          eq(subscriptions.subscriptionStatus, 'active'),
           lt(subscriptions.expiresAt, now),
           eq(subscriptions.userId, userId),
         )
       : and(
-          eq(subscriptions.status, 'active'),
+          eq(subscriptions.subscriptionStatus, 'active'),
           lt(subscriptions.expiresAt, now),
         );
 
     await db
       .update(subscriptions)
-      .set({ status: 'expired' })
+      .set({ subscriptionStatus: 'expired' })
       .where(whereCondition);
   }
 
@@ -262,10 +262,10 @@ export class PaymentService {
 
     const result = await db
       .update(subscriptions)
-      .set({ status: 'expired' })
+      .set({ subscriptionStatus: 'expired' })
       .where(
         and(
-          eq(subscriptions.status, 'active'),
+          eq(subscriptions.subscriptionStatus, 'active'),
           lt(subscriptions.expiresAt, now),
         ),
       )
@@ -284,7 +284,7 @@ export class PaymentService {
       .where(
         and(
           eq(subscriptions.userId, userId),
-          eq(subscriptions.status, 'active'),
+          eq(subscriptions.subscriptionStatus, 'active'),
         ),
       )
       .limit(1);

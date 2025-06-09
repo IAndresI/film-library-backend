@@ -1,9 +1,20 @@
 import { Request, Response, NextFunction } from 'express';
-import { eq, desc, and, count } from 'drizzle-orm';
+import { eq, desc, and, count, avg } from 'drizzle-orm';
 import { db } from '../db/connection';
-import { users, userFavorites, films, watchHistory } from '../schema';
+import {
+  users,
+  userFavorites,
+  films,
+  watchHistory,
+  genres,
+  actors,
+  filmGenres,
+  filmActors,
+  reviews,
+} from '../schema';
 import { deleteFile } from '../utils/fileUtils';
 import { paymentService } from '../services/paymentService';
+import { getFilmRating, enrichFilmsWithDetails } from '../utils/filmUtils';
 import {
   parseSortParams,
   parseFilterParams,
@@ -249,6 +260,8 @@ export const getUserFavorites = async (
         releaseDate: films.releaseDate,
         trailerUrl: films.trailerUrl,
         filmUrl: films.filmUrl,
+        createdAt: films.createdAt,
+        isVisible: films.isVisible,
         addedAt: userFavorites.createdAt,
       })
       .from(films)
@@ -256,7 +269,10 @@ export const getUserFavorites = async (
       .where(eq(userFavorites.userId, userId))
       .orderBy(desc(userFavorites.createdAt));
 
-    res.json(favorites);
+    // Обогащаем данные жанрами, актёрами и рейтингом
+    const favoritesWithDetails = await enrichFilmsWithDetails(favorites);
+
+    res.json(favoritesWithDetails);
   } catch (error) {
     next(error);
   }

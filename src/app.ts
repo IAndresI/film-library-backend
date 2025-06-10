@@ -12,6 +12,8 @@ import authRoutes from './routes/authRoutes';
 import paymentRoutes from './routes/paymentRoutes';
 import subscriptionRoutes from './routes/subscriptionRoutes';
 import { authenticate } from './middlewares/authMiddleware';
+import staticRoutes from './routes/staticRoutes';
+import videoRoutes from './routes/videoRoutes';
 
 const app = express();
 
@@ -25,11 +27,15 @@ app.use(
 
 app.use(express.json());
 
-// Раздача статики
-app.use('/uploads', express.static('uploads'));
-
 // Роуты без авторизации (только auth)
 app.use('/api/auth', authRoutes);
+
+// Защищенная раздача статики
+app.use('/uploads', staticRoutes);
+
+// Видео стриминг (стрим без авторизации, генерация токенов с авторизацией)
+app.use('/api/videos/stream', videoRoutes);
+app.use('/api/videos', authenticate, videoRoutes);
 
 // Гибридные роуты
 app.use('/api/payments', paymentRoutes);

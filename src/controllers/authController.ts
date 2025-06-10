@@ -94,6 +94,9 @@ export const verifyOTP = async (req: Request, res: Response) => {
       isAdmin: userData.isAdmin || false,
     });
 
+    // Получаем подписку пользователя
+    const subscription = await paymentService.getUserSubscription(userData.id);
+
     res.status(200).json({
       token,
       user: {
@@ -101,7 +104,9 @@ export const verifyOTP = async (req: Request, res: Response) => {
         email: userData.email,
         name: userData.name,
         avatar: userData.avatar,
+        createdAt: userData.createdAt,
         isAdmin: userData.isAdmin,
+        subscription: subscription || null,
       },
     });
   } catch (error) {
@@ -180,14 +185,6 @@ export const getCurrentUser = async (
   next: NextFunction,
 ) => {
   try {
-    if (!req.user) {
-      res.status(401).json({
-        success: false,
-        message: 'Пользователь не авторизован',
-      });
-      return;
-    }
-
     // Получаем свежие данные пользователя из БД
     const user = await db
       .select({
@@ -220,6 +217,7 @@ export const getCurrentUser = async (
       email: userData.email,
       name: userData.name,
       avatar: userData.avatar,
+      createdAt: userData.createdAt,
       isAdmin: userData.isAdmin,
       subscription: subscription || null,
     });

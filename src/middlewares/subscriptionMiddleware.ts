@@ -8,14 +8,6 @@ export const requireActiveSubscription = async (
   next: NextFunction,
 ) => {
   try {
-    if (!req.user) {
-      res.status(401).json({
-        success: false,
-        message: 'Необходима авторизация',
-      });
-      return;
-    }
-
     const hasSubscription = await paymentService.hasActiveSubscription(
       req.user.userId,
     );

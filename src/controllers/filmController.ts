@@ -15,6 +15,7 @@ import {
   getFilmRating,
   enrichFilmsWithDetails,
   getFilmSelectFields,
+  enrichFilmsWithAccess,
 } from '../utils/filmUtils';
 import {
   parseSortParams,
@@ -30,6 +31,9 @@ export const getFilms = async (
 ) => {
   try {
     const selectFields = getFilmSelectFields();
+
+    // Получаем userId из middleware (если пользователь авторизован)
+    const userId = req.user.userId;
 
     // Парсинг параметров
     const orderByClause = parseSortParams(req, selectFields);
@@ -118,8 +122,8 @@ export const getFilms = async (
     const totalCount = totalCountResult[0]?.count || 0;
     const totalPages = Math.ceil(totalCount / pagination.pageSize);
 
-    // Обогащаем данные жанрами, актёрами и рейтингом
-    const filmsWithDetails = await enrichFilmsWithDetails(allFilms);
+    // Обогащаем данные жанрами, актёрами, рейтингом и доступом
+    const filmsWithDetails = await enrichFilmsWithDetails(allFilms, userId);
 
     res.json({
       data: filmsWithDetails,
@@ -180,22 +184,6 @@ export const getFilmByIdAdmin = async (
       .innerJoin(filmActors, eq(actors.id, filmActors.actorId))
       .where(eq(filmActors.filmId, id));
 
-    // Отзывы (включая неодобренные)
-    const filmReviews = await db
-      .select({
-        id: reviews.id,
-        rating: reviews.rating,
-        text: reviews.text,
-        createdAt: reviews.createdAt,
-        isApproved: reviews.isApproved,
-        userName: users.name,
-        userAvatar: users.avatar,
-      })
-      .from(reviews)
-      .innerJoin(users, eq(reviews.userId, users.id))
-      .where(eq(reviews.filmId, id))
-      .orderBy(desc(reviews.createdAt));
-
     // Рейтинг фильма
     const rating = await getFilmRating(id);
 
@@ -203,7 +191,6 @@ export const getFilmByIdAdmin = async (
       ...film[0],
       genres: filmGenresList,
       actors: filmActorsList,
-      reviews: filmReviews,
       rating,
     };
 
@@ -388,6 +375,9 @@ export const getFilmById = async (
   try {
     const id = parseInt(req.params.id, 10);
 
+    // Получаем userId из middleware (если пользователь авторизован)
+    const userId = req.user.userId;
+
     // Основная информация о фильме
     const film = await db.select().from(films).where(eq(films.id, id)).limit(1);
 
@@ -426,35 +416,26 @@ export const getFilmById = async (
       })
       .from(actors)
       .innerJoin(filmActors, eq(actors.id, filmActors.actorId))
-      .where(eq(filmActors.filmId, id) && eq(actors.isVisible, true));
-
-    // Отзывы (только одобренные)
-    const filmReviews = await db
-      .select({
-        id: reviews.id,
-        rating: reviews.rating,
-        text: reviews.text,
-        createdAt: reviews.createdAt,
-        userName: users.name,
-        userAvatar: users.avatar,
-      })
-      .from(reviews)
-      .innerJoin(users, eq(reviews.userId, users.id))
-      .where(eq(reviews.filmId, id) && eq(reviews.isApproved, true))
-      .orderBy(desc(reviews.createdAt));
+      .where(and(eq(filmActors.filmId, id), eq(actors.isVisible, true)));
 
     // Рейтинг фильма
     const rating = await getFilmRating(id);
 
-    const result = {
+    // Базовый результат
+    const baseResult = {
       ...film[0],
       genres: filmGenresList,
       actors: filmActorsList,
-      reviews: filmReviews,
       rating,
     };
 
-    res.json(result);
+    // Добавляем информацию о доступе
+    const [resultWithAccess] = await enrichFilmsWithAccess(
+      [baseResult],
+      userId,
+    );
+
+    res.json(resultWithAccess);
   } catch (error) {
     next(error);
   }
@@ -741,6 +722,9 @@ export const searchFilms = async (
   try {
     const selectFields = getFilmSelectFields();
 
+    // Получаем userId из middleware (если пользователь авторизован)
+    const userId = req.user.userId;
+
     // Парсинг параметров
     const orderByClause = parseSortParams(req, selectFields);
     const whereCondition = parseFilterParams(req, selectFields);
@@ -783,8 +767,11 @@ export const searchFilms = async (
     const totalCount = totalCountResult[0]?.count || 0;
     const totalPages = Math.ceil(totalCount / pagination.pageSize);
 
-    // Обогащаем данные жанрами, актёрами и рейтингом
-    const filmsWithDetails = await enrichFilmsWithDetails(searchResults);
+    // Обогащаем данные жанрами, актёрами, рейтингом и доступом
+    const filmsWithDetails = await enrichFilmsWithDetails(
+      searchResults,
+      userId,
+    );
 
     res.json({
       data: filmsWithDetails,

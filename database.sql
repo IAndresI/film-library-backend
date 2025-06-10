@@ -50,7 +50,9 @@ CREATE TABLE films (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     trailer_url VARCHAR(500),
     film_url VARCHAR(500),
-    is_visible BOOLEAN DEFAULT TRUE
+    is_visible BOOLEAN DEFAULT TRUE,
+    is_paid BOOLEAN DEFAULT FALSE,
+    price DECIMAL(10,2) DEFAULT 0.00
 );
 
 -- Таблица отзывов
@@ -81,8 +83,10 @@ CREATE TABLE orders (
     id SERIAL PRIMARY KEY,
     user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
     plan_id INTEGER REFERENCES subscription_plans(id),
+    film_id INTEGER REFERENCES films(id),
     amount DECIMAL(10,2) NOT NULL,
     currency VARCHAR(3) DEFAULT 'RUB',
+    order_type VARCHAR(20) NOT NULL, -- subscription или film
     order_status VARCHAR(20) DEFAULT 'pending', -- pending, paid, failed, cancelled
     payment_method VARCHAR(50), -- bank_card, sbp, wallet, etc
     external_payment_id VARCHAR(255), -- ID платежа в YooKassa
@@ -102,7 +106,7 @@ CREATE TABLE subscriptions (
     started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     expires_at TIMESTAMP NOT NULL,
     auto_renew BOOLEAN DEFAULT FALSE,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Связующая таблица фильм-жанр (многие ко многим)
@@ -137,6 +141,17 @@ CREATE TABLE watch_history (
     progress INTEGER DEFAULT 0 CHECK (progress >= 0 AND progress <= 100) -- процент просмотра
 );
 
+-- Купленные фильмы пользователей
+CREATE TABLE user_purchased_films (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    film_id INTEGER REFERENCES films(id) ON DELETE CASCADE,
+    order_id INTEGER REFERENCES orders(id),
+    purchased_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    expires_at TIMESTAMP, -- null означает бессрочный доступ
+    UNIQUE(user_id, film_id) -- пользователь не может купить один и тот же фильм дважды
+);
+
 -- Индексы для оптимизации
 CREATE INDEX idx_otp_email ON otp_codes(email);
 CREATE INDEX idx_otp_expires ON otp_codes(expires_at);
@@ -147,6 +162,8 @@ CREATE INDEX idx_orders_user_id ON orders(user_id);
 CREATE INDEX idx_orders_status ON orders(order_status);
 CREATE INDEX idx_orders_external_id ON orders(external_payment_id);
 CREATE INDEX idx_orders_expires_at ON orders(expires_at);
+CREATE INDEX idx_orders_film_id ON orders(film_id);
+CREATE INDEX idx_films_paid ON films(is_paid);
 CREATE INDEX idx_subscriptions_user_id ON subscriptions(user_id);
 CREATE INDEX idx_subscriptions_expires_at ON subscriptions(expires_at);
 CREATE INDEX idx_subscriptions_status ON subscriptions(subscription_status);
@@ -157,6 +174,10 @@ CREATE INDEX idx_users_admin ON users(is_admin);
 CREATE INDEX idx_films_release_date ON films(release_date);
 CREATE INDEX idx_films_visible ON films(is_visible);
 CREATE INDEX idx_actors_visible ON actors(is_visible);
+CREATE INDEX idx_purchased_films_user_id ON user_purchased_films(user_id);
+CREATE INDEX idx_purchased_films_film_id ON user_purchased_films(film_id);
+CREATE INDEX idx_purchased_films_order_id ON user_purchased_films(order_id);
+CREATE INDEX idx_purchased_films_expires_at ON user_purchased_films(expires_at);
 
 -- ============= ТЕСТОВЫЕ ДАННЫЕ =============
 
@@ -197,17 +218,17 @@ INSERT INTO actors (name, image, birthday, description, is_visible) VALUES
     ('Эмма Стоун', 'https://images.com/stone.jpg', '1988-11-06', 'Американская актриса', TRUE);
 
 -- Добавляем фильмы
-INSERT INTO films (name, description, image, release_date, trailer_url, film_url, is_visible) VALUES
-    ('Начало', 'Дом Кобб — талантливый вор, лучший из лучших в опасном искусстве извлечения: он крадёт ценные секреты из глубин подсознания во время сна.', 'https://images.com/inception.jpg', '2010-07-16', 'https://trailers.com/inception', 'https://films.com/inception', TRUE),
-    ('Мстители: Финал', 'После разрушительных событий "Войны бесконечности" вселенная лежит в руинах. Оставшиеся в живых Мстители должны собраться снова.', 'https://images.com/endgame.jpg', '2019-04-26', 'https://trailers.com/endgame', 'https://films.com/endgame', TRUE),
-    ('Титаник', 'Молодая аристократка влюбляется в бедного художника на борту роскошного корабля "Титаник".', 'https://images.com/titanic.jpg', '1997-12-19', 'https://trailers.com/titanic', 'https://films.com/titanic', TRUE),
-    ('Интерстеллар', 'Команда исследователей путешествует через червоточину в космосе в попытке обеспечить выживание человечества.', 'https://images.com/interstellar.jpg', '2014-11-07', 'https://trailers.com/interstellar', 'https://films.com/interstellar', TRUE),
-    ('Джокер', 'История происхождения культового злодея из вселенной DC Comics.', 'https://images.com/joker.jpg', '2019-10-04', 'https://trailers.com/joker', 'https://films.com/joker', TRUE),
-    ('Форрест Гамп', 'История жизни Форреста Гампа — слабоумного, но добросердечного человека из Алабамы.', 'https://images.com/gump.jpg', '1994-07-06', 'https://trailers.com/gump', 'https://films.com/gump', TRUE),
-    ('Чёрная пантера', 'ТЧалла возвращается домой в изолированную высокотехнологичную африканскую нацию Ваканду.', 'https://images.com/panther.jpg', '2018-02-16', 'https://trailers.com/panther', 'https://films.com/panther', TRUE),
-    ('Безумный Макс: Дорога ярости', 'В постапокалиптической пустоши женщина восстаёт против тирана и пытается освободить группу девушек.', 'https://images.com/madmax.jpg', '2015-05-15', 'https://trailers.com/madmax', 'https://films.com/madmax', TRUE),
-    ('Ла-Ла Ленд', 'Мия, начинающая актриса, подаёт кофе звёздам Голливуда между прослушиваниями, а Себастьян — джазовый музыкант.', 'https://images.com/lalaland.jpg', '2016-12-09', 'https://trailers.com/lalaland', 'https://films.com/lalaland', TRUE),
-    ('Паразиты', 'Семья Ки-тхэков балансирует на грани бедности. Однажды сын получает рекомендацию устроиться репетитором.', 'https://images.com/parasite.jpg', '2019-05-30', 'https://trailers.com/parasite', 'https://films.com/parasite', TRUE);
+INSERT INTO films (name, description, image, release_date, trailer_url, film_url, is_visible, is_paid, price) VALUES
+    ('Начало', 'Дом Кобб — талантливый вор, лучший из лучших в опасном искусстве извлечения: он крадёт ценные секреты из глубин подсознания во время сна.', 'https://images.com/inception.jpg', '2010-07-16', 'https://trailers.com/inception', 'https://films.com/inception', TRUE, FALSE, 0.00),
+    ('Мстители: Финал', 'После разрушительных событий "Войны бесконечности" вселенная лежит в руинах. Оставшиеся в живых Мстители должны собраться снова.', 'https://images.com/endgame.jpg', '2019-04-26', 'https://trailers.com/endgame', 'https://films.com/endgame', TRUE, TRUE, 299.00),
+    ('Титаник', 'Молодая аристократка влюбляется в бедного художника на борту роскошного корабля "Титаник".', 'https://images.com/titanic.jpg', '1997-12-19', 'https://trailers.com/titanic', 'https://films.com/titanic', TRUE, FALSE, 0.00),
+    ('Интерстеллар', 'Команда исследователей путешествует через червоточину в космосе в попытке обеспечить выживание человечества.', 'https://images.com/interstellar.jpg', '2014-11-07', 'https://trailers.com/interstellar', 'https://films.com/interstellar', TRUE, TRUE, 399.00),
+    ('Джокер', 'История происхождения культового злодея из вселенной DC Comics.', 'https://images.com/joker.jpg', '2019-10-04', 'https://trailers.com/joker', 'https://films.com/joker', TRUE, TRUE, 249.00),
+    ('Форрест Гамп', 'История жизни Форреста Гампа — слабоумного, но добросердечного человека из Алабамы.', 'https://images.com/gump.jpg', '1994-07-06', 'https://trailers.com/gump', 'https://films.com/gump', TRUE, FALSE, 0.00),
+    ('Чёрная пантера', 'ТЧалла возвращается домой в изолированную высокотехнологичную африканскую нацию Ваканду.', 'https://images.com/panther.jpg', '2018-02-16', 'https://trailers.com/panther', 'https://films.com/panther', TRUE, TRUE, 349.00),
+    ('Безумный Макс: Дорога ярости', 'В постапокалиптической пустоши женщина восстаёт против тирана и пытается освободить группу девушек.', 'https://images.com/madmax.jpg', '2015-05-15', 'https://trailers.com/madmax', 'https://films.com/madmax', TRUE, FALSE, 0.00),
+    ('Ла-Ла Ленд', 'Мия, начинающая актриса, подаёт кофе звёздам Голливуда между прослушиваниями, а Себастьян — джазовый музыкант.', 'https://images.com/lalaland.jpg', '2016-12-09', 'https://trailers.com/lalaland', 'https://films.com/lalaland', TRUE, TRUE, 199.00),
+    ('Паразиты', 'Семья Ки-тхэков балансирует на грани бедности. Однажды сын получает рекомендацию устроиться репетитором.', 'https://images.com/parasite.jpg', '2019-05-30', 'https://trailers.com/parasite', 'https://films.com/parasite', TRUE, TRUE, 279.00);
 
 -- Связываем фильмы с жанрами
 INSERT INTO film_genres (film_id, genre_id) VALUES
@@ -277,4 +298,14 @@ INSERT INTO watch_history (user_id, film_id, progress) VALUES
     (3, 3, 100),
     (3, 8, 45),
     (4, 5, 100),
-    (5, 6, 100); 
+    (5, 6, 100);
+
+-- Добавляем купленные фильмы
+INSERT INTO user_purchased_films (user_id, film_id, order_id) VALUES
+    (1, 1, 1),
+    (1, 4, 2),
+    (2, 2, 3),
+    (2, 9, 4),
+    (3, 3, 5),
+    (4, 5, 6),
+    (5, 6, 7); 

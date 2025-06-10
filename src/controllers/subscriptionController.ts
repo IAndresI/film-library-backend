@@ -147,15 +147,7 @@ export const getPlans = async (req: Request, res: Response) => {
 
 export const getUserSubscription = async (req: Request, res: Response) => {
   try {
-    const userId = req.user?.userId;
-
-    if (!userId) {
-      res.status(401).json({
-        success: false,
-        message: 'Необходима авторизация',
-      });
-      return;
-    }
+    const userId = req.user.userId;
 
     const subscription = await paymentService.getUserSubscription(userId);
 

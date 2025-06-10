@@ -5,7 +5,7 @@ import { jwtService } from '../services/jwtService';
 declare global {
   namespace Express {
     interface Request {
-      user?: {
+      user: {
         userId: number;
         email: string;
         isAdmin: boolean;
@@ -59,11 +59,12 @@ export const requireAdmin = (
   res: Response,
   next: NextFunction,
 ) => {
-  if (!req.user?.isAdmin) {
-    return res.status(403).json({
+  if (!req.user.isAdmin) {
+    res.status(403).json({
       success: false,
       message: 'Недостаточно прав доступа',
     });
+    return;
   }
   next();
 };

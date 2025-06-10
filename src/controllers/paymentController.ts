@@ -1,18 +1,13 @@
-import { Request, Response } from 'express';
+import { NextFunction, Request, Response } from 'express';
 import { paymentService } from '../services/paymentService';
 
-export const createPayment = async (req: Request, res: Response) => {
+export const createSubscriptionPurchase = async (
+  req: Request,
+  res: Response,
+) => {
   try {
     const { planId, redirectUrl } = req.body;
-    const userId = req.user?.userId; // предполагаем что middleware auth добавляет user в req
-
-    if (!userId) {
-      res.status(401).json({
-        success: false,
-        message: 'Необходима авторизация',
-      });
-      return;
-    }
+    const userId = req.user.userId;
 
     if (!planId || !redirectUrl) {
       res.status(400).json({
@@ -43,6 +38,38 @@ export const createPayment = async (req: Request, res: Response) => {
       success: false,
       message: 'Ошибка сервера',
     });
+  }
+};
+
+// Создать платеж для покупки фильма
+export const createFilmPurchase = async (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) => {
+  try {
+    const { userId, filmId } = req.body;
+    const redirectUrl =
+      req.body.redirectUrl || `${req.headers.origin}/payment/status`;
+
+    const result = await paymentService.createFilmPayment({
+      userId,
+      filmId,
+      redirectUrl,
+    });
+
+    if (result.success) {
+      res.json({
+        success: true,
+        message: result.message,
+        paymentUrl: result.payment?.confirmation?.confirmation_url,
+        orderId: result.orderId,
+      });
+    } else {
+      res.status(400).json(result);
+    }
+  } catch (error) {
+    next(error);
   }
 };
 

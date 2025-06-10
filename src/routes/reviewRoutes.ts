@@ -11,6 +11,7 @@ import {
   deleteReview,
   getReviewsByFilm,
 } from '../controllers/reviewController';
+import { requireAdmin } from '../middlewares/authMiddleware';
 
 const router = Router();
 
@@ -22,10 +23,10 @@ router.post('/', createReview);
 router.put('/:id', updateReview);
 
 // Админские роуты
-router.get('/', getAllReviews);
-router.get('/pending', getPendingReviews);
-router.put('/:id/approve', approveReview);
-router.put('/:id/reject', rejectReview);
-router.delete('/:id', deleteReview);
+router.get('/', requireAdmin, getAllReviews);
+router.get('/pending', requireAdmin, getPendingReviews);
+router.put('/:id/approve', requireAdmin, approveReview);
+router.put('/:id/reject', requireAdmin, rejectReview);
+router.delete('/:id', requireAdmin, deleteReview);
 
 export default router;

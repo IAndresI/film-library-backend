@@ -1,7 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { eq, desc, count, and } from 'drizzle-orm';
 import { db } from '../db/connection';
-import { orders, users, subscriptionPlans } from '../schema';
+import { orders, users, subscriptionPlans, films } from '../schema';
 import {
   parseSortParams,
   parseFilterParams,
@@ -13,6 +13,7 @@ const getSelectFields = () => ({
   id: orders.id,
   userId: orders.userId,
   planId: orders.planId,
+  filmId: orders.filmId,
   amount: orders.amount,
   orderStatus: orders.orderStatus,
   paymentMethod: orders.paymentMethod,
@@ -25,11 +26,16 @@ const getSelectFields = () => ({
   userAvatar: users.avatar,
   userIsAdmin: users.isAdmin,
   userCreatedAt: users.createdAt,
-  // Информация о плане
+  // Информация о плане (если это подписка)
   planName: subscriptionPlans.name,
   planPrice: subscriptionPlans.price,
   planDurationDays: subscriptionPlans.durationDays,
   planDescription: subscriptionPlans.description,
+  // Информация о фильме (если это покупка фильма)
+  filmName: films.name,
+  filmPrice: films.price,
+  filmDescription: films.description,
+  filmImage: films.image,
 });
 
 // Общая функция для маппинга результатов
@@ -38,9 +44,11 @@ const mapOrdersData = (ordersData: any[]) =>
     id: order.id,
     userId: order.userId,
     planId: order.planId,
+    filmId: order.filmId,
     amount: order.amount,
     orderStatus: order.orderStatus,
     paymentMethod: order.paymentMethod,
+    orderType: order.orderType,
     createdAt: order.createdAt,
     paidAt: order.paidAt,
     expiresAt: order.expiresAt,
@@ -52,13 +60,24 @@ const mapOrdersData = (ordersData: any[]) =>
       isAdmin: order.userIsAdmin,
       createdAt: order.userCreatedAt,
     },
-    plan: {
-      id: order.planId,
-      name: order.planName,
-      price: order.planPrice,
-      durationDays: order.planDurationDays,
-      description: order.planDescription,
-    },
+    ...(order.planId && {
+      plan: {
+        id: order.planId,
+        name: order.planName,
+        price: order.planPrice,
+        durationDays: order.planDurationDays,
+        description: order.planDescription,
+      },
+    }),
+    ...(order.filmId && {
+      film: {
+        id: order.filmId,
+        name: order.filmName,
+        price: order.filmPrice,
+        description: order.filmDescription,
+        image: order.filmImage,
+      },
+    }),
   }));
 
 // Получить все заказы
@@ -80,7 +99,8 @@ export const getOrders = async (
       .select(selectFields)
       .from(orders)
       .innerJoin(users, eq(orders.userId, users.id))
-      .innerJoin(subscriptionPlans, eq(orders.planId, subscriptionPlans.id));
+      .leftJoin(subscriptionPlans, eq(orders.planId, subscriptionPlans.id))
+      .leftJoin(films, eq(orders.filmId, films.id));
 
     // Запрос данных с пагинацией
     const ordersQuery = whereCondition
@@ -100,7 +120,8 @@ export const getOrders = async (
       .select({ count: count() })
       .from(orders)
       .innerJoin(users, eq(orders.userId, users.id))
-      .innerJoin(subscriptionPlans, eq(orders.planId, subscriptionPlans.id));
+      .leftJoin(subscriptionPlans, eq(orders.planId, subscriptionPlans.id))
+      .leftJoin(films, eq(orders.filmId, films.id));
 
     const totalCountResult = whereCondition
       ? await countQuery.where(whereCondition)
@@ -133,10 +154,14 @@ export const getOrderById = async (
 ) => {
   try {
     const id = parseInt(req.params.id, 10);
+    const selectFields = getSelectFields();
 
     const order = await db
-      .select()
+      .select(selectFields)
       .from(orders)
+      .innerJoin(users, eq(orders.userId, users.id))
+      .leftJoin(subscriptionPlans, eq(orders.planId, subscriptionPlans.id))
+      .leftJoin(films, eq(orders.filmId, films.id))
       .where(eq(orders.id, id))
       .limit(1);
 
@@ -145,7 +170,7 @@ export const getOrderById = async (
       return;
     }
 
-    res.json(order[0]);
+    res.json(mapOrdersData(order)[0]);
   } catch (error) {
     next(error);
   }
@@ -179,7 +204,8 @@ export const getUserOrders = async (
       .select(selectFields)
       .from(orders)
       .innerJoin(users, eq(orders.userId, users.id))
-      .innerJoin(subscriptionPlans, eq(orders.planId, subscriptionPlans.id));
+      .leftJoin(subscriptionPlans, eq(orders.planId, subscriptionPlans.id))
+      .leftJoin(films, eq(orders.filmId, films.id));
 
     // Запрос данных с пагинацией
     const queryWithOrder = orderByClause
@@ -195,7 +221,8 @@ export const getUserOrders = async (
       .select({ count: count() })
       .from(orders)
       .innerJoin(users, eq(orders.userId, users.id))
-      .innerJoin(subscriptionPlans, eq(orders.planId, subscriptionPlans.id))
+      .leftJoin(subscriptionPlans, eq(orders.planId, subscriptionPlans.id))
+      .leftJoin(films, eq(orders.filmId, films.id))
       .where(finalCondition);
 
     const totalCountResult = await countQuery;
@@ -225,9 +252,96 @@ export const createOrder = async (
   next: NextFunction,
 ) => {
   try {
-    const orderData = req.body;
+    const { userId, planId, filmId, amount, currency = 'RUB' } = req.body;
+    const orderType = planId ? 'subscription' : 'film';
 
-    const newOrder = await db.insert(orders).values(orderData).returning();
+    // Проверяем, что указан либо planId, либо filmId, но не оба
+    if ((planId && filmId) || (!planId && !filmId)) {
+      res.status(400).json({
+        message:
+          'Необходимо указать либо planId для подписки, либо filmId для покупки фильма',
+      });
+      return;
+    }
+
+    // Проверяем соответствие типа заказа и ID
+    if (orderType === 'subscription' && !planId) {
+      res.status(400).json({
+        message: 'Для заказа подписки необходимо указать planId',
+      });
+      return;
+    }
+
+    if (orderType === 'film' && !filmId) {
+      res.status(400).json({
+        message: 'Для покупки фильма необходимо указать filmId',
+      });
+      return;
+    }
+
+    // Если это заказ фильма, проверяем его существование и платность
+    if (filmId) {
+      const film = await db
+        .select()
+        .from(films)
+        .where(eq(films.id, filmId))
+        .limit(1);
+
+      if (!film[0]) {
+        res.status(404).json({ message: 'Фильм не найден' });
+        return;
+      }
+
+      if (!film[0].isPaid) {
+        res.status(400).json({ message: 'Этот фильм доступен бесплатно' });
+        return;
+      }
+
+      // Проверяем, что сумма заказа соответствует цене фильма
+      if (film[0].price?.toString() !== amount?.toString()) {
+        res.status(400).json({
+          message: 'Сумма заказа не соответствует цене фильма',
+        });
+        return;
+      }
+    }
+
+    // Если это заказ подписки, проверяем план
+    if (planId) {
+      const plan = await db
+        .select()
+        .from(subscriptionPlans)
+        .where(eq(subscriptionPlans.id, planId))
+        .limit(1);
+
+      if (!plan[0]) {
+        res.status(404).json({ message: 'План подписки не найден' });
+        return;
+      }
+
+      // Проверяем, что сумма заказа соответствует цене плана
+      if (plan[0].price?.toString() !== amount?.toString()) {
+        res.status(400).json({
+          message: 'Сумма заказа не соответствует цене плана подписки',
+        });
+        return;
+      }
+    }
+
+    // Создаем заказ
+    const newOrder = await db
+      .insert(orders)
+      .values({
+        userId,
+        planId,
+        filmId,
+        amount,
+        currency,
+        orderType,
+        orderStatus: 'pending',
+        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24 часа на оплату
+      })
+      .returning();
 
     res.status(201).json(newOrder[0]);
   } catch (error) {

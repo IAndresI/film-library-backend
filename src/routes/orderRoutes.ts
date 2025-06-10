@@ -7,15 +7,21 @@ import {
   updateOrder,
   deleteOrder,
 } from '../controllers/orderController';
+import { requireAdmin } from '../middlewares/authMiddleware';
 
 const router = Router();
 
-// CRUD операции с заказами
-router.get('/', getOrders);
-router.get('/:id', getOrderById);
-router.get('/user/:userId', getUserOrders);
-router.post('/', createOrder);
-router.put('/:id', updateOrder);
-router.delete('/:id', deleteOrder);
+// Админские операции с заказами
+router.get('/', requireAdmin, getOrders); // Только админы могут просматривать все заказы
+router.put('/:id', requireAdmin, updateOrder); // Только админы могут обновлять заказы
+router.delete('/:id', requireAdmin, deleteOrder); // Только админы могут удалять заказы
+
+// Пользовательские операции
+router.get('/user/:userId', getUserOrders); // Заказы пользователя
+router.get('/:id', getOrderById); // Конкретный заказ
+
+// Создание заказов
+router.post('/subscription', createOrder); // Создать заказ на подписку
+router.post('/film', createOrder); // Создать заказ на фильм
 
 export default router;

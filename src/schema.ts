@@ -63,6 +63,8 @@ export const films = pgTable('films', {
   trailerUrl: varchar('trailer_url', { length: 500 }),
   filmUrl: varchar('film_url', { length: 500 }),
   isVisible: boolean('is_visible').default(true),
+  isPaid: boolean('is_paid').default(false),
+  price: decimal('price', { precision: 10, scale: 2 }).default('0.00'),
 });
 
 // Отзывы
@@ -99,8 +101,10 @@ export const orders = pgTable('orders', {
     onDelete: 'cascade',
   }),
   planId: integer('plan_id').references(() => subscriptionPlans.id),
+  filmId: integer('film_id').references(() => films.id),
   amount: decimal('amount', { precision: 10, scale: 2 }).notNull(),
   currency: varchar('currency', { length: 3 }).default('RUB'),
+  orderType: varchar('order_type', { length: 20 }).notNull(),
   orderStatus: varchar('order_status', { length: 20 }).default('pending'), // pending, paid, failed, cancelled
   paymentMethod: varchar('payment_method', { length: 50 }),
   externalPaymentId: varchar('external_payment_id', { length: 255 }),
@@ -196,6 +200,20 @@ export const watchHistory = pgTable('watch_history', {
   progress: integer('progress').default(0),
 });
 
+// Купленные фильмы
+export const userPurchasedFilms = pgTable('user_purchased_films', {
+  id: serial('id').primaryKey(),
+  userId: integer('user_id').references(() => users.id, {
+    onDelete: 'cascade',
+  }),
+  filmId: integer('film_id').references(() => films.id, {
+    onDelete: 'cascade',
+  }),
+  orderId: integer('order_id').references(() => orders.id),
+  purchasedAt: timestamp('purchased_at').defaultNow(),
+  expiresAt: timestamp('expires_at'),
+});
+
 // Обновленные связи
 export const subscriptionPlansRelations = relations(
   subscriptionPlans,
@@ -214,7 +232,12 @@ export const ordersRelations = relations(orders, ({ one, many }) => ({
     fields: [orders.planId],
     references: [subscriptionPlans.id],
   }),
+  film: one(films, {
+    fields: [orders.filmId],
+    references: [films.id],
+  }),
   subscriptions: many(subscriptions),
+  purchasedFilm: many(userPurchasedFilms),
 }));
 
 export const subscriptionsRelations = relations(subscriptions, ({ one }) => ({
@@ -238,6 +261,7 @@ export const usersRelations = relations(users, ({ many }) => ({
   orders: many(orders),
   favorites: many(userFavorites),
   watchHistory: many(watchHistory),
+  purchasedFilms: many(userPurchasedFilms),
 }));
 
 export const filmsRelations = relations(films, ({ many }) => ({
@@ -246,6 +270,8 @@ export const filmsRelations = relations(films, ({ many }) => ({
   actors: many(filmActors),
   userFavorites: many(userFavorites),
   watchHistory: many(watchHistory),
+  orders: many(orders),
+  purchasedBy: many(userPurchasedFilms),
 }));
 
 export const genresRelations = relations(genres, ({ many }) => ({
@@ -310,3 +336,21 @@ export const watchHistoryRelations = relations(watchHistory, ({ one }) => ({
     references: [films.id],
   }),
 }));
+
+export const userPurchasedFilmsRelations = relations(
+  userPurchasedFilms,
+  ({ one }) => ({
+    user: one(users, {
+      fields: [userPurchasedFilms.userId],
+      references: [users.id],
+    }),
+    film: one(films, {
+      fields: [userPurchasedFilms.filmId],
+      references: [films.id],
+    }),
+    order: one(orders, {
+      fields: [userPurchasedFilms.orderId],
+      references: [orders.id],
+    }),
+  }),
+);

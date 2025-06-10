@@ -11,6 +11,7 @@ import { errorHandler } from './middlewares/errorHandler';
 import authRoutes from './routes/authRoutes';
 import paymentRoutes from './routes/paymentRoutes';
 import subscriptionRoutes from './routes/subscriptionRoutes';
+import { authenticate } from './middlewares/authMiddleware';
 
 const app = express();
 
@@ -27,8 +28,16 @@ app.use(express.json());
 // Раздача статики
 app.use('/uploads', express.static('uploads'));
 
-// Routes
+// Роуты без авторизации (только auth)
+app.use('/api/auth', authRoutes);
+
+// Гибридные роуты
 app.use('/api/payments', paymentRoutes);
+
+// Все остальные роуты требуют авторизации
+app.use('/api', authenticate);
+
+// Защищенные роуты
 app.use('/api/subscriptions', subscriptionRoutes);
 app.use('/api/films', filmRoutes);
 app.use('/api/genres', genreRoutes);
@@ -37,7 +46,6 @@ app.use('/api/reviews', reviewRoutes);
 app.use('/api/orders', orderRoutes);
 app.use('/api/actors', actorRoutes);
 app.use('/api/filters', filterRoutes);
-app.use('/api/auth', authRoutes);
 
 // Global error handler (should be after routes)
 app.use(errorHandler);

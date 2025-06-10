@@ -248,6 +248,9 @@ export const getUserFavorites = async (
   try {
     const userId = parseInt(req.params.id, 10);
 
+    // Парсинг параметров пагинации
+    const pagination = parsePaginationParams(req);
+
     // Обработка параметров запроса
     const searchQuery = req.query.search || req.query.query;
 
@@ -319,15 +322,78 @@ export const getUserFavorites = async (
 
     const finalCondition = and(...baseConditions);
 
+    // Запрос данных с пагинацией
     const favorites = await baseQuery
       .where(finalCondition)
       .groupBy(films.id, userFavorites.createdAt)
-      .orderBy(desc(userFavorites.createdAt));
+      .orderBy(desc(userFavorites.createdAt))
+      .limit(pagination.limit)
+      .offset(pagination.offset);
+
+    // Запрос общего количества
+    let countQuery = db
+      .select({ count: count() })
+      .from(films)
+      .innerJoin(userFavorites, eq(films.id, userFavorites.filmId));
+
+    // Добавляем JOIN для фильтров если они есть
+    if (genreIds.length > 0) {
+      countQuery = countQuery.innerJoin(
+        filmGenres,
+        eq(films.id, filmGenres.filmId),
+      );
+    }
+
+    if (actorIds.length > 0) {
+      countQuery = countQuery.innerJoin(
+        filmActors,
+        eq(films.id, filmActors.filmId),
+      );
+    }
+
+    const totalCountResult = await countQuery.where(finalCondition);
+    const totalCount = totalCountResult[0]?.count || 0;
+    const totalPages = Math.ceil(totalCount / pagination.pageSize);
 
     // Обогащаем данные жанрами, актёрами и рейтингом
     const favoritesWithDetails = await enrichFilmsWithDetails(favorites);
 
-    res.json(favoritesWithDetails);
+    res.json({
+      data: favoritesWithDetails,
+      pagination: {
+        pageIndex: pagination.pageIndex,
+        pageSize: pagination.pageSize,
+        totalCount,
+        totalPages,
+        hasNextPage: pagination.pageIndex < totalPages - 1,
+        hasPreviousPage: pagination.pageIndex > 0,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Получить только ID избранных фильмов пользователя
+export const getUserFavoriteIds = async (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) => {
+  try {
+    const userId = parseInt(req.params.id, 10);
+
+    const favoriteIds = await db
+      .select({
+        filmId: userFavorites.filmId,
+      })
+      .from(userFavorites)
+      .where(eq(userFavorites.userId, userId))
+      .orderBy(desc(userFavorites.createdAt));
+
+    const ids = favoriteIds.map((f) => f.filmId);
+
+    res.json(ids);
   } catch (error) {
     next(error);
   }

@@ -7,6 +7,10 @@ import {
   parseFilterParams,
   parsePaginationParams,
 } from '../utils/queryParser';
+import {
+  enrichFilmsWithDetails,
+  getFilmSelectFields,
+} from '../utils/filmUtils';
 
 // Общий селект объект для всех запросов заказов
 const getSelectFields = () => ({
@@ -20,6 +24,7 @@ const getSelectFields = () => ({
   createdAt: orders.createdAt,
   paidAt: orders.paidAt,
   expiresAt: orders.expiresAt,
+  orderType: orders.orderType,
   // Информация о пользователе
   userName: users.name,
   userEmail: users.email,
@@ -39,8 +44,17 @@ const getSelectFields = () => ({
 });
 
 // Общая функция для маппинга результатов
-const mapOrdersData = (ordersData: any[]) =>
-  ordersData.map((order) => ({
+const mapOrdersData = (ordersData: any[], filmsDetails?: any[]) => {
+  const filmsMap = new Map();
+
+  // Создаем map для быстрого поиска обогащенных фильмов
+  if (filmsDetails) {
+    filmsDetails.forEach((film) => {
+      filmsMap.set(film.id, film);
+    });
+  }
+
+  return ordersData.map((order) => ({
     id: order.id,
     userId: order.userId,
     planId: order.planId,
@@ -70,7 +84,7 @@ const mapOrdersData = (ordersData: any[]) =>
       },
     }),
     ...(order.filmId && {
-      film: {
+      film: filmsMap.get(order.filmId) || {
         id: order.filmId,
         name: order.filmName,
         price: order.filmPrice,
@@ -79,6 +93,7 @@ const mapOrdersData = (ordersData: any[]) =>
       },
     }),
   }));
+};
 
 // Получить все заказы
 export const getOrders = async (
@@ -115,6 +130,31 @@ export const getOrders = async (
       .limit(pagination.limit)
       .offset(pagination.offset);
 
+    // Обогащаем фильмы деталями если есть заказы с фильмами
+    const filmIds = allOrders
+      .filter((order) => order.filmId)
+      .map((order) => order.filmId)
+      .filter((id): id is number => id !== null);
+
+    let enrichedFilms: any[] = [];
+    if (filmIds.length > 0) {
+      const { inArray } = await import('drizzle-orm');
+
+      // Получаем базовые данные фильмов
+      const filmsData =
+        filmIds.length === 1
+          ? await db
+              .select(getFilmSelectFields())
+              .from(films)
+              .where(eq(films.id, filmIds[0]))
+          : await db
+              .select(getFilmSelectFields())
+              .from(films)
+              .where(inArray(films.id, filmIds));
+
+      enrichedFilms = await enrichFilmsWithDetails(filmsData);
+    }
+
     // Запрос общего количества
     const countQuery = db
       .select({ count: count() })
@@ -131,7 +171,7 @@ export const getOrders = async (
     const totalPages = Math.ceil(totalCount / pagination.pageSize);
 
     res.json({
-      data: mapOrdersData(allOrders),
+      data: mapOrdersData(allOrders, enrichedFilms),
       pagination: {
         pageIndex: pagination.pageIndex,
         pageSize: pagination.pageSize,
@@ -146,8 +186,56 @@ export const getOrders = async (
   }
 };
 
-// Получить заказ по ID
+// Получить заказ по ID (только для владельца)
 export const getOrderById = async (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const userId = req.user?.userId;
+
+    if (!userId) {
+      res.status(401).json({ message: 'Необходима авторизация' });
+      return;
+    }
+
+    const selectFields = getSelectFields();
+
+    const order = await db
+      .select(selectFields)
+      .from(orders)
+      .innerJoin(users, eq(orders.userId, users.id))
+      .leftJoin(subscriptionPlans, eq(orders.planId, subscriptionPlans.id))
+      .leftJoin(films, eq(orders.filmId, films.id))
+      .where(and(eq(orders.id, id), eq(orders.userId, userId)))
+      .limit(1);
+
+    if (!order[0]) {
+      res.status(404).json({ message: 'Заказ не найден' });
+      return;
+    }
+
+    // Обогащаем фильм деталями если есть
+    let enrichedFilms: any[] = [];
+    if (order[0].filmId) {
+      const filmsData = await db
+        .select(getFilmSelectFields())
+        .from(films)
+        .where(eq(films.id, order[0].filmId));
+
+      enrichedFilms = await enrichFilmsWithDetails(filmsData);
+    }
+
+    res.json(mapOrdersData(order, enrichedFilms)[0]);
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Получить заказ по ID (только для админов)
+export const getOrderByIdAdmin = async (
   req: Request,
   res: Response,
   next: NextFunction,
@@ -170,7 +258,18 @@ export const getOrderById = async (
       return;
     }
 
-    res.json(mapOrdersData(order)[0]);
+    // Обогащаем фильм деталями если есть
+    let enrichedFilms: any[] = [];
+    if (order[0].filmId) {
+      const filmsData = await db
+        .select(getFilmSelectFields())
+        .from(films)
+        .where(eq(films.id, order[0].filmId));
+
+      enrichedFilms = await enrichFilmsWithDetails(filmsData);
+    }
+
+    res.json(mapOrdersData(order, enrichedFilms)[0]);
   } catch (error) {
     next(error);
   }
@@ -184,6 +283,15 @@ export const getUserOrders = async (
 ) => {
   try {
     const userId = parseInt(req.params.userId, 10);
+    const currentUserId = req.user?.userId;
+    const isAdmin = req.user?.isAdmin;
+
+    // Проверяем, что пользователь запрашивает свои заказы или является админом
+    if (!isAdmin && currentUserId !== userId) {
+      res.status(403).json({ message: 'Доступ запрещен' });
+      return;
+    }
+
     const selectFields = getSelectFields();
 
     // Парсинг параметров
@@ -216,6 +324,31 @@ export const getUserOrders = async (
       .limit(pagination.limit)
       .offset(pagination.offset);
 
+    // Обогащаем фильмы деталями если есть заказы с фильмами
+    const filmIds = userOrders
+      .filter((order) => order.filmId)
+      .map((order) => order.filmId)
+      .filter((id): id is number => id !== null);
+
+    let enrichedFilms: any[] = [];
+    if (filmIds.length > 0) {
+      const { inArray } = await import('drizzle-orm');
+
+      // Получаем базовые данные фильмов
+      const filmsData =
+        filmIds.length === 1
+          ? await db
+              .select(getFilmSelectFields())
+              .from(films)
+              .where(eq(films.id, filmIds[0]))
+          : await db
+              .select(getFilmSelectFields())
+              .from(films)
+              .where(inArray(films.id, filmIds));
+
+      enrichedFilms = await enrichFilmsWithDetails(filmsData);
+    }
+
     // Запрос общего количества
     const countQuery = db
       .select({ count: count() })
@@ -230,7 +363,7 @@ export const getUserOrders = async (
     const totalPages = Math.ceil(totalCount / pagination.pageSize);
 
     res.json({
-      data: mapOrdersData(userOrders),
+      data: mapOrdersData(userOrders, enrichedFilms),
       pagination: {
         pageIndex: pagination.pageIndex,
         pageSize: pagination.pageSize,

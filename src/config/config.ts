@@ -8,6 +8,7 @@ interface Config {
   dbUrl: string;
   shopKey: string;
   shopId: string;
+  redirectHost: string;
 }
 
 const config: Config = {
@@ -16,6 +17,7 @@ const config: Config = {
   dbUrl: process.env.DATABASE_URL || '',
   shopKey: process.env.SHOP_KEY || '',
   shopId: process.env.SHOP_ID || '',
+  redirectHost: process.env.REDIRECT_HOST || '',
 };
 
 export default config;

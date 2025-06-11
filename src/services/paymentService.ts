@@ -30,7 +30,7 @@ export class PaymentService {
   }: {
     userId: number;
     planId: number;
-    redirectUrl: string;
+    redirectUrl?: string;
   }): Promise<{
     success: boolean;
     message: string;
@@ -79,7 +79,8 @@ export class PaymentService {
         capture: true,
         confirmation: {
           type: 'redirect',
-          return_url: redirectUrl,
+          return_url:
+            redirectUrl || `${config.redirectHost}/profile/orders/${order.id}`,
         },
         metadata: {
           userId,
@@ -123,7 +124,7 @@ export class PaymentService {
   }: {
     userId: number;
     filmId: number;
-    redirectUrl: string;
+    redirectUrl?: string;
   }): Promise<{
     success: boolean;
     message: string;
@@ -187,7 +188,8 @@ export class PaymentService {
         capture: true,
         confirmation: {
           type: 'redirect',
-          return_url: redirectUrl,
+          return_url:
+            redirectUrl || `${config.redirectHost}/profile/orders/${order.id}`,
         },
         metadata: {
           userId,

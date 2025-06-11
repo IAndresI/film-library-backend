@@ -2,6 +2,7 @@ import { Router } from 'express';
 import {
   getOrders,
   getOrderById,
+  getOrderByIdAdmin,
   getUserOrders,
   createOrder,
   updateOrder,
@@ -15,6 +16,7 @@ const router = Router();
 router.get('/', requireAdmin, getOrders); // Только админы могут просматривать все заказы
 router.put('/:id', requireAdmin, updateOrder); // Только админы могут обновлять заказы
 router.delete('/:id', requireAdmin, deleteOrder); // Только админы могут удалять заказы
+router.get('/admin/:id', requireAdmin, requireAdmin, getOrderByIdAdmin); // Админский просмотр конкретного заказа
 
 // Пользовательские операции
 router.get('/user/:userId', getUserOrders); // Заказы пользователя

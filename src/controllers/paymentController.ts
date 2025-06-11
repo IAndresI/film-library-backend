@@ -9,10 +9,10 @@ export const createSubscriptionPurchase = async (
     const { planId, redirectUrl } = req.body;
     const userId = req.user.userId;
 
-    if (!planId || !redirectUrl) {
+    if (!planId) {
       res.status(400).json({
         success: false,
-        message: 'Необходимо указать planId и redirectUrl',
+        message: 'Необходимо указать planId',
       });
       return;
     }
@@ -49,13 +49,10 @@ export const createFilmPurchase = async (
 ) => {
   try {
     const { userId, filmId } = req.body;
-    const redirectUrl =
-      req.body.redirectUrl || `${req.headers.origin}/payment/status`;
 
     const result = await paymentService.createFilmPayment({
       userId,
       filmId,
-      redirectUrl,
     });
 
     if (result.success) {

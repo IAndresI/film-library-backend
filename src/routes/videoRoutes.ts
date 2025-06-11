@@ -33,15 +33,20 @@ setInterval(
   30 * 60 * 1000,
 );
 
+const allowedOrigins = ['http://localhost:5173'];
+
+const validateOrigin = (req: Request) => {
+  const origin = req.headers.origin || req.headers.referer;
+  return allowedOrigins.some((allowed) => origin?.startsWith(allowed));
+};
+
 // Стриминг видео по ID фильма
 router.get('/:filmId', async (req: Request, res: Response): Promise<void> => {
   try {
     const { filmId } = req.params;
     const token = req.query.token as string;
 
-    // Проверка Referer - доступ только с localhost:5173
-    const referer = req.headers.referer || req.headers.origin;
-    if (!referer || !referer.startsWith('http://localhost:5173')) {
+    if (!validateOrigin(req)) {
       res.status(403).json({
         error: 'Доступ запрещен',
         message: 'Стриминг доступен только с разрешенного домена',

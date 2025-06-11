@@ -9,6 +9,7 @@ import {
   filmActors,
   reviews,
   users,
+  userPurchasedFilms,
 } from '../schema';
 import { deleteFile } from '../utils/fileUtils';
 import {
@@ -455,6 +456,8 @@ export const createFilm = async (
       trailerUrl,
       filmUrl,
       isVisible,
+      isPaid,
+      price,
       genres,
       actors,
     } = req.body;
@@ -475,6 +478,8 @@ export const createFilm = async (
         trailerUrl,
         filmUrl,
         isVisible: isVisible === 'true',
+        isPaid: isPaid === 'true',
+        price: price === 'null' ? null : price || '0.00',
       })
       .returning();
 
@@ -515,8 +520,16 @@ export const updateFilmData = async (
 ) => {
   try {
     const id = parseInt(req.params.id, 10);
-    const { name, description, releaseDate, isVisible, genres, actors } =
-      req.body;
+    const {
+      name,
+      description,
+      releaseDate,
+      isVisible,
+      isPaid,
+      price,
+      genres,
+      actors,
+    } = req.body;
 
     // Проверяем существование фильма
     const existingFilm = await db
@@ -549,6 +562,8 @@ export const updateFilmData = async (
         image,
         releaseDate,
         isVisible: isVisible === 'true',
+        isPaid: isPaid === 'true',
+        price: price === 'null' ? null : price || '0.00',
       })
       .where(eq(films.id, id))
       .returning();
@@ -812,6 +827,134 @@ export const toggleFilmVisibility = async (
       .returning();
 
     res.json(updatedFilm[0]);
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Получить купленные фильмы пользователя
+export const getUserPurchasedFilms = async (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) => {
+  try {
+    const userId = req.user.userId;
+    const selectFields = getFilmSelectFields();
+
+    // Парсинг параметров
+    const orderByClause = parseSortParams(req, selectFields);
+    const pagination = parsePaginationParams(req);
+
+    // Обработка параметров фильтрации
+    const searchQuery = req.query.search || req.query.query;
+
+    // Обработка жанров - может прийти как 'genres[]' или 'genres'
+    let genreIds: string[] = [];
+    if (req.query['genres[]']) {
+      genreIds = Array.isArray(req.query['genres[]'])
+        ? (req.query['genres[]'] as string[])
+        : [req.query['genres[]'] as string];
+    } else if (req.query.genres) {
+      genreIds = Array.isArray(req.query.genres)
+        ? (req.query.genres as string[])
+        : [req.query.genres as string];
+    }
+
+    // Обработка актёров - может прийти как 'actors[]' или 'actors'
+    let actorIds: string[] = [];
+    if (req.query['actors[]']) {
+      actorIds = Array.isArray(req.query['actors[]'])
+        ? (req.query['actors[]'] as string[])
+        : [req.query['actors[]'] as string];
+    } else if (req.query.actors) {
+      actorIds = Array.isArray(req.query.actors)
+        ? (req.query.actors as string[])
+        : [req.query.actors as string];
+    }
+
+    // Получаем ID фильмов, которые купил пользователь
+    const purchasedFilmIds = db
+      .selectDistinct({ filmId: userPurchasedFilms.filmId })
+      .from(userPurchasedFilms)
+      .where(eq(userPurchasedFilms.userId, userId));
+
+    // Базовые условия: видимые фильмы + купленные пользователем
+    const baseConditions = [
+      eq(films.isVisible, true),
+      inArray(films.id, purchasedFilmIds),
+    ];
+
+    // Поиск по названию фильма
+    if (searchQuery && typeof searchQuery === 'string') {
+      baseConditions.push(ilike(films.name, `%${searchQuery}%`));
+    }
+
+    // Фильтр по жанрам
+    if (genreIds.length > 0) {
+      const filmIdsWithGenres = db
+        .selectDistinct({ filmId: filmGenres.filmId })
+        .from(filmGenres)
+        .where(inArray(filmGenres.genreId, genreIds.map(Number)));
+
+      baseConditions.push(inArray(films.id, filmIdsWithGenres));
+    }
+
+    // Фильтр по актёрам
+    if (actorIds.length > 0) {
+      const filmIdsWithActors = db
+        .selectDistinct({ filmId: filmActors.filmId })
+        .from(filmActors)
+        .where(inArray(filmActors.actorId, actorIds.map(Number)));
+
+      baseConditions.push(inArray(films.id, filmIdsWithActors));
+    }
+
+    const finalCondition = and(...baseConditions);
+
+    // Запрос данных с пагинацией
+    const queryWithOrder = orderByClause
+      ? db
+          .select(selectFields)
+          .from(films)
+          .where(finalCondition)
+          .orderBy(orderByClause)
+      : db
+          .select(selectFields)
+          .from(films)
+          .where(finalCondition)
+          .orderBy(desc(films.createdAt));
+
+    const purchasedFilms = await queryWithOrder
+      .limit(pagination.limit)
+      .offset(pagination.offset);
+
+    // Запрос общего количества
+    const totalCountResult = await db
+      .select({ count: count() })
+      .from(films)
+      .where(finalCondition);
+
+    const totalCount = totalCountResult[0]?.count || 0;
+    const totalPages = Math.ceil(totalCount / pagination.pageSize);
+
+    // Обогащаем данные жанрами, актёрами, рейтингом и доступом
+    const filmsWithDetails = await enrichFilmsWithDetails(
+      purchasedFilms,
+      userId,
+    );
+
+    res.json({
+      data: filmsWithDetails,
+      pagination: {
+        pageIndex: pagination.pageIndex,
+        pageSize: pagination.pageSize,
+        totalCount,
+        totalPages,
+        hasNextPage: pagination.pageIndex < totalPages - 1,
+        hasPreviousPage: pagination.pageIndex > 0,
+      },
+    });
   } catch (error) {
     next(error);
   }

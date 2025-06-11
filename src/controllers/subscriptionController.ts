@@ -216,11 +216,19 @@ export const createManualSubscription = async (req: Request, res: Response) => {
       })
       .returning();
 
-    res.status(201).json({
-      success: true,
-      message: 'Подписка успешно создана',
-      subscription: newSubscription[0],
-    });
+    // Возвращаем подписку с информацией о плане
+    const subscriptionWithPlan = {
+      ...newSubscription[0],
+      plan: {
+        id: plan[0].id,
+        name: plan[0].name,
+        price: plan[0].price,
+        durationDays: plan[0].durationDays,
+        description: plan[0].description,
+      },
+    };
+
+    res.status(201).json(subscriptionWithPlan);
   } catch (error) {
     console.error('Ошибка создания подписки:', error);
     res.status(500).json({

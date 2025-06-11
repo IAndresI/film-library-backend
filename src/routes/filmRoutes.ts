@@ -10,15 +10,17 @@ import {
   deleteFilm,
   searchFilms,
   toggleFilmVisibility,
+  getUserPurchasedFilms,
 } from '../controllers/filmController';
 import { uploadFilmImage, uploadFilmMedia } from '../middlewares/upload';
-import { requireAdmin } from '../middlewares/authMiddleware';
+import { requireAdmin, authenticate } from '../middlewares/authMiddleware';
 
 const router = Router();
 
 // Публичные роуты (для авторизованных пользователей)
 router.get('/', getFilms);
 router.get('/search', searchFilms);
+router.get('/purchased', getUserPurchasedFilms);
 router.get('/:id', getFilmById);
 
 // Админские роуты

@@ -35,7 +35,7 @@ app.use('/uploads', staticRoutes);
 
 // Видео стриминг (стрим без авторизации, генерация токенов с авторизацией)
 app.use('/api/videos/stream', videoRoutes);
-app.use('/api/videos', authenticate, videoRoutes);
+app.use('/api/videos', videoRoutes);
 
 // Гибридные роуты
 app.use('/api/payments', paymentRoutes);

@@ -11,6 +11,7 @@ import {
   enrichFilmsWithDetails,
   getFilmSelectFields,
 } from '../utils/filmUtils';
+import { paymentService } from '../services/paymentService';
 
 // Общий селект объект для всех запросов заказов
 const getSelectFields = () => ({
@@ -25,6 +26,7 @@ const getSelectFields = () => ({
   paidAt: orders.paidAt,
   expiresAt: orders.expiresAt,
   orderType: orders.orderType,
+  externalPaymentId: orders.externalPaymentId,
   // Информация о пользователе
   userName: users.name,
   userEmail: users.email,
@@ -66,6 +68,7 @@ const mapOrdersData = (ordersData: any[], filmsDetails?: any[]) => {
     createdAt: order.createdAt,
     paidAt: order.paidAt,
     expiresAt: order.expiresAt,
+    externalPaymentId: order.externalPaymentId,
     user: {
       id: order.userId,
       name: order.userName,
@@ -228,7 +231,11 @@ export const getOrderById = async (
       enrichedFilms = await enrichFilmsWithDetails(filmsData);
     }
 
-    res.json(mapOrdersData(order, enrichedFilms)[0]);
+    const orderWithDetails = mapOrdersData(order, enrichedFilms)[0];
+
+    await paymentService.checkAndProcessOrder(orderWithDetails);
+
+    res.json(orderWithDetails);
   } catch (error) {
     next(error);
   }
@@ -373,6 +380,49 @@ export const getUserOrders = async (
         hasPreviousPage: pagination.pageIndex > 0,
       },
     });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const checkOrderPayment = async (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) => {
+  try {
+    const userId = req.user.userId;
+    const orderId = parseInt(req.params.orderId, 10);
+
+    const [order] = await db
+      .select({
+        id: orders.id,
+        userId: orders.userId,
+        planId: orders.planId,
+        filmId: orders.filmId,
+        amount: orders.amount,
+        orderStatus: orders.orderStatus,
+        paymentMethod: orders.paymentMethod,
+        createdAt: orders.createdAt,
+        paidAt: orders.paidAt,
+        expiresAt: orders.expiresAt,
+        orderType: orders.orderType,
+        externalPaymentId: orders.externalPaymentId,
+        planDurationDays: subscriptionPlans.durationDays,
+      })
+      .from(orders)
+      .where(and(eq(orders.id, orderId), eq(orders.userId, userId)))
+      .leftJoin(subscriptionPlans, eq(orders.planId, subscriptionPlans.id))
+      .limit(1);
+
+    if (!order) {
+      res.status(404).json({ message: 'Заказ не найден' });
+      return;
+    }
+
+    const updateStatus = await paymentService.checkAndProcessOrder(order);
+
+    res.json(updateStatus);
   } catch (error) {
     next(error);
   }

@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
-import { eq, desc, and, count } from 'drizzle-orm';
+import { eq, desc, and, count, asc } from 'drizzle-orm';
 import { db } from '../db/connection';
 import { reviews, users, films } from '../schema';
 import {
@@ -209,6 +209,35 @@ export const getAllReviews = async (
     const whereCondition = parseFilterParams(req, selectFields);
     const pagination = parsePaginationParams(req);
 
+    // Проверяем сортировку по полям пользователя или фильма
+    const sort = req.query.sort as any;
+    let needsCustomSort = false;
+    let customSortField = null;
+    let customSortDesc = false;
+
+    if (sort && Array.isArray(sort) && sort.length > 0) {
+      const firstSort = sort[0];
+      if (
+        firstSort &&
+        (firstSort.id === 'userName' ||
+          firstSort.id === 'filmName' ||
+          firstSort.id === 'userEmail' ||
+          firstSort.id === 'filmDescription')
+      ) {
+        needsCustomSort = true;
+        if (firstSort.id === 'userName') {
+          customSortField = users.name;
+        } else if (firstSort.id === 'userEmail') {
+          customSortField = users.email;
+        } else if (firstSort.id === 'filmName') {
+          customSortField = films.name;
+        } else if (firstSort.id === 'filmDescription') {
+          customSortField = films.description;
+        }
+        customSortDesc = firstSort.desc === 'true';
+      }
+    }
+
     // Базовый запрос
     const baseQuery = db
       .select(selectFields)
@@ -221,10 +250,20 @@ export const getAllReviews = async (
       ? baseQuery.where(whereCondition)
       : baseQuery;
 
-    const reviewsData = await reviewsQuery
-      .orderBy(orderByClause)
-      .limit(pagination.limit)
-      .offset(pagination.offset);
+    let reviewsData;
+    if (needsCustomSort && customSortField) {
+      // Кастомная сортировка по полям из других таблиц
+      reviewsData = await reviewsQuery
+        .orderBy(customSortDesc ? desc(customSortField) : asc(customSortField))
+        .limit(pagination.limit)
+        .offset(pagination.offset);
+    } else {
+      // Обычная сортировка
+      reviewsData = await reviewsQuery
+        .orderBy(orderByClause || desc(reviews.createdAt))
+        .limit(pagination.limit)
+        .offset(pagination.offset);
+    }
 
     // Запрос общего количества
     const countQuery = db
@@ -270,6 +309,35 @@ export const getPendingReviews = async (
     const whereCondition = parseFilterParams(req, selectFields);
     const pagination = parsePaginationParams(req);
 
+    // Проверяем сортировку по полям пользователя или фильма
+    const sort = req.query.sort as any;
+    let needsCustomSort = false;
+    let customSortField = null;
+    let customSortDesc = false;
+
+    if (sort && Array.isArray(sort) && sort.length > 0) {
+      const firstSort = sort[0];
+      if (
+        firstSort &&
+        (firstSort.id === 'userName' ||
+          firstSort.id === 'filmName' ||
+          firstSort.id === 'userEmail' ||
+          firstSort.id === 'filmDescription')
+      ) {
+        needsCustomSort = true;
+        if (firstSort.id === 'userName') {
+          customSortField = users.name;
+        } else if (firstSort.id === 'userEmail') {
+          customSortField = users.email;
+        } else if (firstSort.id === 'filmName') {
+          customSortField = films.name;
+        } else if (firstSort.id === 'filmDescription') {
+          customSortField = films.description;
+        }
+        customSortDesc = firstSort.desc === 'true';
+      }
+    }
+
     // Базовое условие: неодобренные отзывы
     const baseCondition = eq(reviews.isApproved, false);
 
@@ -278,16 +346,29 @@ export const getPendingReviews = async (
       ? and(baseCondition, whereCondition)
       : baseCondition;
 
-    // Запрос данных с пагинацией
-    const reviewsData = await db
+    // Базовый запрос
+    const baseQuery = db
       .select(selectFields)
       .from(reviews)
       .innerJoin(users, eq(reviews.userId, users.id))
       .innerJoin(films, eq(reviews.filmId, films.id))
-      .where(finalCondition)
-      .orderBy(orderByClause)
-      .limit(pagination.limit)
-      .offset(pagination.offset);
+      .where(finalCondition);
+
+    // Запрос данных с пагинацией
+    let reviewsData;
+    if (needsCustomSort && customSortField) {
+      // Кастомная сортировка по полям из других таблиц
+      reviewsData = await baseQuery
+        .orderBy(customSortDesc ? desc(customSortField) : asc(customSortField))
+        .limit(pagination.limit)
+        .offset(pagination.offset);
+    } else {
+      // Обычная сортировка
+      reviewsData = await baseQuery
+        .orderBy(orderByClause || desc(reviews.createdAt))
+        .limit(pagination.limit)
+        .offset(pagination.offset);
+    }
 
     // Запрос общего количества
     const totalCountResult = await db

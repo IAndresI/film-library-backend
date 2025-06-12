@@ -15,6 +15,7 @@ import {
   parseSortParams,
   parseFilterParams,
   parsePaginationParams,
+  parseArrayParam,
 } from '../utils/queryParser';
 
 // Получить всех видимых актёров
@@ -41,17 +42,8 @@ export const getActors = async (
     // Обработка параметров фильтрации
     const searchQuery = req.query.search;
 
-    // Обработка фильмов - может прийти как 'films[]' или 'films'
-    let filmIds: string[] = [];
-    if (req.query['films[]']) {
-      filmIds = Array.isArray(req.query['films[]'])
-        ? (req.query['films[]'] as string[])
-        : [req.query['films[]'] as string];
-    } else if (req.query.films) {
-      filmIds = Array.isArray(req.query.films)
-        ? (req.query.films as string[])
-        : [req.query.films as string];
-    }
+    // Обработка фильмов
+    const filmIds = parseArrayParam(req.query.films);
 
     // Базовые условия
     const baseConditions = [eq(actors.isVisible, true)];

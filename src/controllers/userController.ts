@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
-import { eq, desc, and, count, inArray, ilike } from 'drizzle-orm';
+import { eq, desc, and, count, inArray, ilike, avg, sql } from 'drizzle-orm';
 import { db } from '../db/connection';
 import {
   users,
@@ -8,6 +8,7 @@ import {
   watchHistory,
   filmGenres,
   filmActors,
+  reviews,
 } from '../schema';
 import { deleteFile } from '../utils/fileUtils';
 import { paymentService } from '../services/paymentService';
@@ -16,6 +17,7 @@ import {
   parseSortParams,
   parseFilterParams,
   parsePaginationParams,
+  parseArrayParam,
 } from '../utils/queryParser';
 
 // Получить всех пользователей
@@ -254,28 +256,45 @@ export const getUserFavorites = async (
     // Обработка параметров запроса
     const searchQuery = req.query.search || req.query.query;
 
-    // Обработка жанров - может прийти как 'genres[]' или 'genres'
-    let genreIds: string[] = [];
-    if (req.query['genres[]']) {
-      genreIds = Array.isArray(req.query['genres[]'])
-        ? (req.query['genres[]'] as string[])
-        : [req.query['genres[]'] as string];
-    } else if (req.query.genres) {
-      genreIds = Array.isArray(req.query.genres)
-        ? (req.query.genres as string[])
-        : [req.query.genres as string];
-    }
+    // Обработка жанров
+    const genreIds = parseArrayParam(req.query.genres);
 
-    // Обработка актёров - может прийти как 'actors[]' или 'actors'
-    let actorIds: string[] = [];
-    if (req.query['actors[]']) {
-      actorIds = Array.isArray(req.query['actors[]'])
-        ? (req.query['actors[]'] as string[])
-        : [req.query['actors[]'] as string];
-    } else if (req.query.actors) {
-      actorIds = Array.isArray(req.query.actors)
-        ? (req.query.actors as string[])
-        : [req.query.actors as string];
+    // Обработка актёров
+    const actorIds = parseArrayParam(req.query.actors);
+
+    // Определяем поля для сортировки
+    const selectFields = {
+      id: films.id,
+      name: films.name,
+      description: films.description,
+      image: films.image,
+      releaseDate: films.releaseDate,
+      trailerUrl: films.trailerUrl,
+      filmUrl: films.filmUrl,
+      createdAt: userFavorites.createdAt,
+      isVisible: films.isVisible,
+      addedAt: userFavorites.createdAt,
+    };
+
+    // Проверяем сортировку
+    const sort = req.query.sort as any;
+    let ratingSort: { desc: boolean } | null = null;
+    let reviewCountSort: { desc: boolean } | null = null;
+    let orderByClause = null;
+
+    if (sort && Array.isArray(sort) && sort.length > 0) {
+      const firstSort = sort[0];
+      if (firstSort && firstSort.id === 'rating') {
+        ratingSort = { desc: firstSort.desc === 'true' };
+      } else if (firstSort && firstSort.id === 'reviewCount') {
+        reviewCountSort = { desc: firstSort.desc === 'true' };
+      } else {
+        // Обычная сортировка через parseSortParams
+        orderByClause = parseSortParams(req, selectFields);
+      }
+    } else {
+      // Сортировка по умолчанию
+      orderByClause = desc(userFavorites.createdAt);
     }
 
     // Базовые условия
@@ -286,21 +305,50 @@ export const getUserFavorites = async (
       baseConditions.push(ilike(films.name, `%${searchQuery}%`));
     }
 
-    let baseQuery = db
-      .select({
-        id: films.id,
-        name: films.name,
-        description: films.description,
-        image: films.image,
-        releaseDate: films.releaseDate,
-        trailerUrl: films.trailerUrl,
-        filmUrl: films.filmUrl,
-        createdAt: films.createdAt,
-        isVisible: films.isVisible,
-        addedAt: userFavorites.createdAt,
-      })
-      .from(films)
-      .innerJoin(userFavorites, eq(films.id, userFavorites.filmId));
+    // Создаем запрос в зависимости от сортировки
+    let baseQuery;
+
+    if (ratingSort || reviewCountSort) {
+      // Запрос с reviews для сортировки по рейтингу/количеству оценок
+      baseQuery = db
+        .select({
+          id: films.id,
+          name: films.name,
+          description: films.description,
+          image: films.image,
+          releaseDate: films.releaseDate,
+          trailerUrl: films.trailerUrl,
+          filmUrl: films.filmUrl,
+          createdAt: films.createdAt,
+          isVisible: films.isVisible,
+          addedAt: userFavorites.createdAt,
+          avgRating: avg(reviews.rating),
+          reviewCount: count(reviews.id),
+        })
+        .from(films)
+        .innerJoin(userFavorites, eq(films.id, userFavorites.filmId))
+        .leftJoin(
+          reviews,
+          and(eq(films.id, reviews.filmId), eq(reviews.isApproved, true)),
+        );
+    } else {
+      // Обычный запрос без reviews
+      baseQuery = db
+        .select({
+          id: films.id,
+          name: films.name,
+          description: films.description,
+          image: films.image,
+          releaseDate: films.releaseDate,
+          trailerUrl: films.trailerUrl,
+          filmUrl: films.filmUrl,
+          createdAt: films.createdAt,
+          isVisible: films.isVisible,
+          addedAt: userFavorites.createdAt,
+        })
+        .from(films)
+        .innerJoin(userFavorites, eq(films.id, userFavorites.filmId));
+    }
 
     // Фильтр по жанрам
     if (genreIds.length > 0) {
@@ -322,13 +370,53 @@ export const getUserFavorites = async (
 
     const finalCondition = and(...baseConditions);
 
-    // Запрос данных с пагинацией
-    const favorites = await baseQuery
-      .where(finalCondition)
-      .groupBy(films.id, userFavorites.createdAt)
-      .orderBy(desc(userFavorites.createdAt))
-      .limit(pagination.limit)
-      .offset(pagination.offset);
+    // Выполняем запрос в зависимости от типа сортировки
+    let favorites: any[] = [];
+
+    if (ratingSort || reviewCountSort) {
+      // Запрос с группировкой и сортировкой по рейтингу/количеству оценок
+      const queryWithWhere = baseQuery.where(finalCondition);
+      const queryWithGroup = queryWithWhere.groupBy(
+        films.id,
+        userFavorites.createdAt,
+      );
+
+      if (ratingSort) {
+        // Сортировка по рейтингу (фильмы без рейтинга всегда внизу)
+        if (ratingSort.desc) {
+          favorites = await queryWithGroup
+            .orderBy(
+              sql`CASE WHEN ${avg(reviews.rating)} IS NULL THEN 1 ELSE 0 END`,
+              desc(avg(reviews.rating)),
+            )
+            .limit(pagination.limit)
+            .offset(pagination.offset);
+        } else {
+          favorites = await queryWithGroup
+            .orderBy(
+              sql`CASE WHEN ${avg(reviews.rating)} IS NULL THEN 1 ELSE 0 END`,
+              avg(reviews.rating),
+            )
+            .limit(pagination.limit)
+            .offset(pagination.offset);
+        }
+      } else if (reviewCountSort) {
+        // Сортировка по количеству оценок
+        favorites = await queryWithGroup
+          .orderBy(
+            reviewCountSort.desc ? desc(count(reviews.id)) : count(reviews.id),
+          )
+          .limit(pagination.limit)
+          .offset(pagination.offset);
+      }
+    } else {
+      // Обычный запрос с обычными сортировками
+      favorites = await baseQuery
+        .where(finalCondition)
+        .orderBy(orderByClause || desc(userFavorites.createdAt))
+        .limit(pagination.limit)
+        .offset(pagination.offset);
+    }
 
     // Запрос общего количества
     let countQuery = db

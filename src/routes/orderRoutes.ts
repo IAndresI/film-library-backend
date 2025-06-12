@@ -7,6 +7,7 @@ import {
   createOrder,
   updateOrder,
   deleteOrder,
+  checkOrderPayment,
 } from '../controllers/orderController';
 import { requireAdmin } from '../middlewares/authMiddleware';
 
@@ -16,11 +17,12 @@ const router = Router();
 router.get('/', requireAdmin, getOrders); // Только админы могут просматривать все заказы
 router.put('/:id', requireAdmin, updateOrder); // Только админы могут обновлять заказы
 router.delete('/:id', requireAdmin, deleteOrder); // Только админы могут удалять заказы
-router.get('/admin/:id', requireAdmin, requireAdmin, getOrderByIdAdmin); // Админский просмотр конкретного заказа
+router.get('/admin/:id', requireAdmin, getOrderByIdAdmin); // Админский просмотр конкретного заказа
 
 // Пользовательские операции
 router.get('/user/:userId', getUserOrders); // Заказы пользователя
 router.get('/:id', getOrderById); // Конкретный заказ
+router.post('/check/:orderId', checkOrderPayment);
 
 // Создание заказов
 router.post('/subscription', createOrder); // Создать заказ на подписку

@@ -17,6 +17,9 @@ import videoRoutes from './routes/videoRoutes';
 
 const app = express();
 
+// Настраиваем query parser для работы с массивами
+app.set('query parser', 'extended');
+
 // CORS настройка
 app.use(
   cors({

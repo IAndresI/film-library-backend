@@ -6,7 +6,7 @@ import { films } from '../schema';
 import { eq } from 'drizzle-orm';
 import { jwtService } from '../services/jwtService';
 import { paymentService } from '../services/paymentService';
-import { authenticate } from '../middlewares/authMiddleware';
+import { authenticate, requireAdmin } from '../middlewares/authMiddleware';
 
 const router = Router();
 
@@ -411,6 +411,123 @@ router.post(
       });
     } catch (error) {
       console.error('Ошибка обновления токена:', error);
+      res.status(500).json({ error: 'Внутренняя ошибка сервера' });
+    }
+  },
+);
+
+// Админский роут для генерации временного токена
+router.post(
+  '/admin/token/:filmId',
+  authenticate,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { filmId } = req.params;
+      const userId = req.user?.userId;
+
+      if (!userId) {
+        res.status(400).json({ error: 'userId обязателен' });
+        return;
+      }
+
+      // Получаем данные фильма только для имени
+      const film = await db
+        .select({ name: films.name })
+        .from(films)
+        .where(eq(films.id, parseInt(filmId)))
+        .limit(1);
+
+      if (!film[0]) {
+        res.status(404).json({ error: 'Фильм не найден' });
+        return;
+      }
+
+      // Генерируем временный токен с уникальным ID
+      const tokenId = `${userId}-${filmId}-${Date.now()}`;
+      const expiresAt = Date.now() + expiredTime;
+      const tempToken = Buffer.from(
+        JSON.stringify({
+          userId,
+          filmId: parseInt(filmId),
+          tokenId,
+          exp: expiresAt,
+          type: 'video_access',
+        }),
+      ).toString('base64');
+
+      // Сохраняем в кэш активных токенов
+      activeTokens.set(tokenId, {
+        userId,
+        filmId: parseInt(filmId),
+        expiresAt,
+        originalToken: tempToken,
+      });
+
+      res.json({
+        token: tempToken,
+        tokenId,
+        filmId: parseInt(filmId),
+        streamUrl: `/videos/stream/${filmId}?token=${tempToken}`,
+        expiresIn: expiredTime / 1000,
+        filmName: film[0].name,
+      });
+    } catch (error) {
+      console.error('Ошибка генерации админского токена:', error);
+      res.status(500).json({ error: 'Внутренняя ошибка сервера' });
+    }
+  },
+);
+
+// Админский роут для обновления токена
+router.post(
+  '/admin/refresh/:filmId',
+  authenticate,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { filmId } = req.params;
+      const userId = req.user?.userId;
+      const { tokenId } = req.body;
+
+      if (!userId || !tokenId) {
+        res.status(400).json({ error: 'userId и tokenId обязательны' });
+        return;
+      }
+
+      // Получаем данные фильма только для имени
+      const film = await db
+        .select({ name: films.name })
+        .from(films)
+        .where(eq(films.id, parseInt(filmId)))
+        .limit(1);
+
+      if (!film[0]) {
+        res.status(404).json({ error: 'Фильм не найден' });
+        return;
+      }
+
+      // Проверяем существует ли токен в кэше
+      const activeToken = activeTokens.get(tokenId);
+      if (!activeToken) {
+        res.status(404).json({ error: 'Токен не найден или истек' });
+        return;
+      }
+
+      // Продлеваем срок действия в кэше
+      const newExpiresAt = Date.now() + expiredTime;
+      activeTokens.set(tokenId, {
+        ...activeToken,
+        expiresAt: newExpiresAt,
+      });
+
+      res.json({
+        tokenId,
+        expiresIn: expiredTime / 1000,
+        filmName: film[0].name,
+        refreshed: true,
+        message: 'Токен продлен, URL остается прежним',
+      });
+    } catch (error) {
+      console.error('Ошибка обновления админского токена:', error);
       res.status(500).json({ error: 'Внутренняя ошибка сервера' });
     }
   },

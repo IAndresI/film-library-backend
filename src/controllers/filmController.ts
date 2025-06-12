@@ -1,5 +1,15 @@
 import { Request, Response, NextFunction } from 'express';
-import { eq, desc, like, avg, and, count, inArray, ilike } from 'drizzle-orm';
+import {
+  eq,
+  desc,
+  like,
+  avg,
+  and,
+  count,
+  inArray,
+  ilike,
+  sql,
+} from 'drizzle-orm';
 import { db } from '../db/connection';
 import {
   films,
@@ -22,6 +32,7 @@ import {
   parseSortParams,
   parseFilterParams,
   parsePaginationParams,
+  parseArrayParam,
 } from '../utils/queryParser';
 
 // Получить все видимые фильмы
@@ -43,29 +54,11 @@ export const getFilms = async (
     // Обработка параметров фильтрации
     const searchQuery = req.query.search || req.query.query;
 
-    // Обработка жанров - может прийти как 'genres[]' или 'genres'
-    let genreIds: string[] = [];
-    if (req.query['genres[]']) {
-      genreIds = Array.isArray(req.query['genres[]'])
-        ? (req.query['genres[]'] as string[])
-        : [req.query['genres[]'] as string];
-    } else if (req.query.genres) {
-      genreIds = Array.isArray(req.query.genres)
-        ? (req.query.genres as string[])
-        : [req.query.genres as string];
-    }
+    // Обработка жанров
+    const genreIds = parseArrayParam(req.query.genres);
 
-    // Обработка актёров - может прийти как 'actors[]' или 'actors'
-    let actorIds: string[] = [];
-    if (req.query['actors[]']) {
-      actorIds = Array.isArray(req.query['actors[]'])
-        ? (req.query['actors[]'] as string[])
-        : [req.query['actors[]'] as string];
-    } else if (req.query.actors) {
-      actorIds = Array.isArray(req.query.actors)
-        ? (req.query.actors as string[])
-        : [req.query.actors as string];
-    }
+    // Обработка актёров
+    const actorIds = parseArrayParam(req.query.actors);
 
     // Базовые условия
     const baseConditions = [eq(films.isVisible, true)];
@@ -95,20 +88,70 @@ export const getFilms = async (
       baseConditions.push(inArray(films.id, filmIdsWithActors));
     }
 
+    // Проверяем сортировку по рейтингу или количеству оценок
+    const sort = req.query.sort as any;
+    let ratingSort: { desc: boolean } | null = null;
+    let reviewCountSort: { desc: boolean } | null = null;
+
+    if (sort && Array.isArray(sort) && sort.length > 0) {
+      const firstSort = sort[0];
+      if (firstSort && firstSort.id === 'rating') {
+        ratingSort = { desc: firstSort.desc === 'true' };
+      } else if (firstSort && firstSort.id === 'reviewCount') {
+        reviewCountSort = { desc: firstSort.desc === 'true' };
+      }
+    }
+
     const finalCondition = and(...baseConditions);
 
+    // Базовый запрос
+    let baseQuery;
+
+    if (ratingSort || reviewCountSort) {
+      // Если сортировка по рейтингу или количеству оценок
+      baseQuery = db
+        .select({
+          ...selectFields,
+          avgRating: avg(reviews.rating),
+          reviewCount: count(reviews.id),
+        })
+        .from(films)
+        .leftJoin(
+          reviews,
+          and(eq(films.id, reviews.filmId), eq(reviews.isApproved, true)),
+        )
+        .where(finalCondition)
+        .groupBy(films.id);
+    } else {
+      // Обычный запрос без JOIN
+      baseQuery = db.select(selectFields).from(films).where(finalCondition);
+    }
+
     // Запрос данных с пагинацией
-    const queryWithOrder = orderByClause
-      ? db
-          .select(selectFields)
-          .from(films)
-          .where(finalCondition)
-          .orderBy(orderByClause)
-      : db
-          .select(selectFields)
-          .from(films)
-          .where(finalCondition)
-          .orderBy(desc(films.createdAt));
+    let queryWithOrder;
+    if (ratingSort) {
+      // Сортировка по рейтингу (фильмы без рейтинга всегда внизу)
+      if (ratingSort.desc) {
+        queryWithOrder = baseQuery.orderBy(
+          sql`CASE WHEN ${avg(reviews.rating)} IS NULL THEN 1 ELSE 0 END`,
+          desc(avg(reviews.rating)),
+        );
+      } else {
+        queryWithOrder = baseQuery.orderBy(
+          sql`CASE WHEN ${avg(reviews.rating)} IS NULL THEN 1 ELSE 0 END`,
+          avg(reviews.rating),
+        );
+      }
+    } else if (reviewCountSort) {
+      // Сортировка по количеству оценок
+      queryWithOrder = reviewCountSort.desc
+        ? baseQuery.orderBy(desc(count(reviews.id)))
+        : baseQuery.orderBy(count(reviews.id));
+    } else if (orderByClause) {
+      queryWithOrder = baseQuery.orderBy(orderByClause);
+    } else {
+      queryWithOrder = baseQuery.orderBy(desc(films.createdAt));
+    }
 
     const allFilms = await queryWithOrder
       .limit(pagination.limit)
@@ -215,46 +258,29 @@ export const getAllFilms = async (
     const whereCondition = parseFilterParams(req, selectFields);
     const pagination = parsePaginationParams(req);
 
-    // Отдельно обрабатываем сортировку по рейтингу и фильтры по жанрам
+    // Обработка фильтров по жанрам и сортировки по рейтингу из новой структуры
+    const filters = req.query.filters as any;
+    const sort = req.query.sort as any;
+    let genreFilters: number[] = [];
     let ratingSort: { desc: boolean } | null = null;
-    const genreFilters: number[] = [];
-    const queryKeys = Object.keys(req.query);
 
-    let sortId: string | undefined;
-    let sortDesc: string | undefined;
-
-    queryKeys.forEach((key) => {
-      // Обрабатываем сортировку
-      const sortMatch = key.match(/^sort\[(\d+)\]\[(.+)\]$/);
-      if (sortMatch) {
-        const field = sortMatch[2];
-        if (field === 'id') {
-          sortId = req.query[key] as string;
-        } else if (field === 'desc') {
-          sortDesc = req.query[key] as string;
+    if (filters && Array.isArray(filters)) {
+      filters.forEach((filter: any) => {
+        if (filter.id === 'genres' && filter.value) {
+          const values = Array.isArray(filter.value)
+            ? filter.value
+            : [filter.value];
+          genreFilters = values.map((v: string) => parseInt(v, 10));
         }
+      });
+    }
+
+    // Проверяем сортировку по рейтингу
+    if (sort && Array.isArray(sort) && sort.length > 0) {
+      const firstSort = sort[0];
+      if (firstSort && firstSort.id === 'rating') {
+        ratingSort = { desc: firstSort.desc === 'true' };
       }
-
-      // Обрабатываем фильтры по жанрам
-      const filterMatch = key.match(/^filters\[(\d+)\]\[(.+)\]$/);
-      if (filterMatch) {
-        const field = filterMatch[2];
-        if (field === 'id' && req.query[key] === 'genres') {
-          // Ищем соответствующие значения жанров
-          const index = filterMatch[1];
-          const valueArrayKeys = queryKeys.filter((k) =>
-            k.startsWith(`filters[${index}][value][`),
-          );
-
-          valueArrayKeys.forEach((vKey) => {
-            genreFilters.push(Number(req.query[vKey]));
-          });
-        }
-      }
-    });
-
-    if (sortId === 'rating' && sortDesc !== undefined) {
-      ratingSort = { desc: sortDesc === 'true' };
     }
 
     // Базовый запрос
@@ -316,10 +342,20 @@ export const getAllFilms = async (
 
     let queryWithOrder;
     if (ratingSort) {
-      // Сортировка по рейтингу
-      queryWithOrder = ratingSort.desc
-        ? filmsQuery.orderBy(desc(avg(reviews.rating)))
-        : filmsQuery.orderBy(avg(reviews.rating));
+      // Сортировка по рейтингу (фильмы без рейтинга всегда внизу)
+      const { sql } = await import('drizzle-orm');
+
+      if (ratingSort.desc) {
+        queryWithOrder = filmsQuery.orderBy(
+          sql`CASE WHEN ${avg(reviews.rating)} IS NULL THEN 1 ELSE 0 END`,
+          desc(avg(reviews.rating)),
+        );
+      } else {
+        queryWithOrder = filmsQuery.orderBy(
+          sql`CASE WHEN ${avg(reviews.rating)} IS NULL THEN 1 ELSE 0 END`,
+          avg(reviews.rating),
+        );
+      }
     } else if (orderByClause) {
       queryWithOrder = filmsQuery.orderBy(orderByClause);
     } else {
@@ -849,28 +885,24 @@ export const getUserPurchasedFilms = async (
     // Обработка параметров фильтрации
     const searchQuery = req.query.search || req.query.query;
 
-    // Обработка жанров - может прийти как 'genres[]' или 'genres'
-    let genreIds: string[] = [];
-    if (req.query['genres[]']) {
-      genreIds = Array.isArray(req.query['genres[]'])
-        ? (req.query['genres[]'] as string[])
-        : [req.query['genres[]'] as string];
-    } else if (req.query.genres) {
-      genreIds = Array.isArray(req.query.genres)
-        ? (req.query.genres as string[])
-        : [req.query.genres as string];
-    }
+    // Обработка жанров
+    const genreIds = parseArrayParam(req.query.genres);
 
-    // Обработка актёров - может прийти как 'actors[]' или 'actors'
-    let actorIds: string[] = [];
-    if (req.query['actors[]']) {
-      actorIds = Array.isArray(req.query['actors[]'])
-        ? (req.query['actors[]'] as string[])
-        : [req.query['actors[]'] as string];
-    } else if (req.query.actors) {
-      actorIds = Array.isArray(req.query.actors)
-        ? (req.query.actors as string[])
-        : [req.query.actors as string];
+    // Обработка актёров
+    const actorIds = parseArrayParam(req.query.actors);
+
+    // Проверяем сортировку по рейтингу или количеству оценок
+    const sort = req.query.sort as any;
+    let ratingSort: { desc: boolean } | null = null;
+    let reviewCountSort: { desc: boolean } | null = null;
+
+    if (sort && Array.isArray(sort) && sort.length > 0) {
+      const firstSort = sort[0];
+      if (firstSort && firstSort.id === 'rating') {
+        ratingSort = { desc: firstSort.desc === 'true' };
+      } else if (firstSort && firstSort.id === 'reviewCount') {
+        reviewCountSort = { desc: firstSort.desc === 'true' };
+      }
     }
 
     // Получаем ID фильмов, которые купил пользователь
@@ -912,18 +944,54 @@ export const getUserPurchasedFilms = async (
 
     const finalCondition = and(...baseConditions);
 
+    // Базовый запрос
+    let baseQuery;
+
+    if (ratingSort || reviewCountSort) {
+      // Если сортировка по рейтингу или количеству оценок
+      baseQuery = db
+        .select({
+          ...selectFields,
+          avgRating: avg(reviews.rating),
+          reviewCount: count(reviews.id),
+        })
+        .from(films)
+        .leftJoin(
+          reviews,
+          and(eq(films.id, reviews.filmId), eq(reviews.isApproved, true)),
+        )
+        .where(finalCondition)
+        .groupBy(films.id);
+    } else {
+      // Обычный запрос без JOIN
+      baseQuery = db.select(selectFields).from(films).where(finalCondition);
+    }
+
     // Запрос данных с пагинацией
-    const queryWithOrder = orderByClause
-      ? db
-          .select(selectFields)
-          .from(films)
-          .where(finalCondition)
-          .orderBy(orderByClause)
-      : db
-          .select(selectFields)
-          .from(films)
-          .where(finalCondition)
-          .orderBy(desc(films.createdAt));
+    let queryWithOrder;
+    if (ratingSort) {
+      // Сортировка по рейтингу (фильмы без рейтинга всегда внизу)
+      if (ratingSort.desc) {
+        queryWithOrder = baseQuery.orderBy(
+          sql`CASE WHEN ${avg(reviews.rating)} IS NULL THEN 1 ELSE 0 END`,
+          desc(avg(reviews.rating)),
+        );
+      } else {
+        queryWithOrder = baseQuery.orderBy(
+          sql`CASE WHEN ${avg(reviews.rating)} IS NULL THEN 1 ELSE 0 END`,
+          avg(reviews.rating),
+        );
+      }
+    } else if (reviewCountSort) {
+      // Сортировка по количеству оценок
+      queryWithOrder = reviewCountSort.desc
+        ? baseQuery.orderBy(desc(count(reviews.id)))
+        : baseQuery.orderBy(count(reviews.id));
+    } else if (orderByClause) {
+      queryWithOrder = baseQuery.orderBy(orderByClause);
+    } else {
+      queryWithOrder = baseQuery.orderBy(desc(films.createdAt));
+    }
 
     const purchasedFilms = await queryWithOrder
       .limit(pagination.limit)

@@ -14,6 +14,12 @@ router.use('/', (req: Request, res: Response): void => {
     return;
   }
 
+  // Блокируем прямой доступ к папке с видео
+  if (requestPath.startsWith('films/videos/')) {
+    res.status(403).json({ error: 'Доступ запрещен' });
+    return;
+  }
+
   const filePath = path.join(process.cwd(), 'uploads', requestPath);
 
   if (!fs.existsSync(filePath)) {

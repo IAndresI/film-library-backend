@@ -5,6 +5,7 @@ import {
   subscriptionPlans,
   films,
   userPurchasedFilms,
+  users,
 } from '../schema';
 import { eq, and, lt, desc, or, gt, isNull } from 'drizzle-orm';
 import {
@@ -230,6 +231,8 @@ export class PaymentService {
   async handlePaymentWebhook(
     paymentData: INotification,
   ): Promise<{ success: boolean; message: string }> {
+    console.log('handlePaymentWebhook');
+
     try {
       const {
         object: { id: paymentId, status, metadata },
@@ -272,7 +275,20 @@ export class PaymentService {
       // Обрабатываем успешный платеж
       if (status === PaymentStatuses.succeeded) {
         if (planId) {
-          // Обработка подписки
+          // Проверяем существующую подписку по orderId
+          const existingSubscriptionByOrder = await db
+            .select()
+            .from(subscriptions)
+            .where(eq(subscriptions.orderId, orderId))
+            .limit(1);
+
+          if (existingSubscriptionByOrder.length > 0) {
+            return {
+              success: true,
+              message: 'Подписка уже существует для этого заказа',
+            };
+          }
+
           const plan = await db
             .select()
             .from(subscriptionPlans)
@@ -291,10 +307,43 @@ export class PaymentService {
               subscriptionStatus: 'active',
               startedAt: startDate,
               expiresAt: endDate,
+              autoRenew: false,
             });
           }
         } else if (filmId) {
-          // Обработка покупки фильма
+          // Проверяем существующую покупку по orderId
+          const existingPurchaseByOrder = await db
+            .select()
+            .from(userPurchasedFilms)
+            .where(eq(userPurchasedFilms.orderId, orderId))
+            .limit(1);
+
+          if (existingPurchaseByOrder.length > 0) {
+            return {
+              success: true,
+              message: 'Фильм уже куплен по этому заказу',
+            };
+          }
+
+          // Проверяем, не куплен ли уже фильм у пользователя
+          const existingPurchase = await db
+            .select()
+            .from(userPurchasedFilms)
+            .where(
+              and(
+                eq(userPurchasedFilms.userId, userId),
+                eq(userPurchasedFilms.filmId, filmId),
+              ),
+            )
+            .limit(1);
+
+          if (existingPurchase.length > 0) {
+            return {
+              success: true,
+              message: 'Пользователь уже купил этот фильм',
+            };
+          }
+
           await db.insert(userPurchasedFilms).values({
             userId,
             filmId,
@@ -447,6 +496,154 @@ export class PaymentService {
       .limit(1);
 
     return purchase.length > 0;
+  }
+
+  async checkAndProcessOrder(
+    order: any,
+  ): Promise<{ success: boolean; message: string; order?: any }> {
+    try {
+      if (!order.externalPaymentId) {
+        return {
+          success: false,
+          message: 'Отсутствует ID платежа',
+        };
+      }
+
+      // Проверяем статус платежа в ЮKassa
+      const checkout = await YouKassa.getPayment(order.externalPaymentId);
+
+      let orderStatus: string;
+
+      if (checkout.status !== PaymentStatuses.succeeded) {
+        switch (checkout.status) {
+          case PaymentStatuses.canceled:
+            orderStatus = 'cancelled';
+            break;
+          case PaymentStatuses.pending:
+          case PaymentStatuses.waiting_for_capture:
+            orderStatus = 'pending';
+            break;
+          default:
+            orderStatus = 'failed';
+        }
+
+        const updatedOrder = await db
+          .update(orders)
+          .set({
+            orderStatus,
+          })
+          .where(eq(orders.externalPaymentId, order.externalPaymentId))
+          .returning();
+        return {
+          success: true,
+          message: 'Заказ обновлен',
+          order: updatedOrder[0],
+        };
+      }
+
+      // Проверяем тип заказа и обрабатываем соответственно
+      if (
+        order.orderType === 'subscription' &&
+        order.planId &&
+        order.planDurationDays
+      ) {
+        // Проверяем существующую подписку
+        const existingSubscription = await db
+          .select()
+          .from(subscriptions)
+          .where(eq(subscriptions.orderId, order.id))
+          .limit(1);
+
+        if (existingSubscription.length > 0) {
+          return {
+            success: true,
+            message: 'Подписка уже активирована для этого заказа',
+            order: order,
+          };
+        }
+
+        // Создаем новую подписку
+        const startDate = new Date();
+        const endDate = new Date(
+          startDate.getTime() + order.planDurationDays * 24 * 60 * 60 * 1000,
+        );
+
+        await db.insert(subscriptions).values({
+          userId: order.userId,
+          planId: order.planId,
+          orderId: order.id,
+          subscriptionStatus: 'active',
+          startedAt: startDate,
+          expiresAt: endDate,
+          autoRenew: false,
+        });
+
+        const updatedOrder = await db
+          .update(orders)
+          .set({
+            orderStatus: 'paid',
+            paidAt: new Date(),
+          })
+          .where(eq(orders.externalPaymentId, order.externalPaymentId))
+          .returning();
+
+        return {
+          success: true,
+          message: 'Подписка успешно активирована',
+          order: updatedOrder[0],
+        };
+      } else if (order.orderType === 'film' && order.filmId) {
+        // Проверяем существующую покупку
+        const existingPurchase = await db
+          .select()
+          .from(userPurchasedFilms)
+          .where(eq(userPurchasedFilms.orderId, order.id))
+          .limit(1);
+
+        if (existingPurchase.length > 0) {
+          return {
+            success: true,
+            message: 'Фильм уже добавлен в купленные',
+            order: order,
+          };
+        }
+
+        // Создаем новую запись о покупке фильма
+        await db.insert(userPurchasedFilms).values({
+          userId: order.userId,
+          filmId: order.filmId,
+          orderId: order.id,
+          purchasedAt: new Date(),
+          expiresAt: null, // бессрочный доступ
+        });
+
+        const updatedOrder = await db
+          .update(orders)
+          .set({
+            orderStatus: 'paid',
+            paidAt: new Date(),
+          })
+          .where(eq(orders.externalPaymentId, order.externalPaymentId))
+          .returning();
+
+        return {
+          success: true,
+          message: 'Фильм успешно добавлен в купленные',
+          order: updatedOrder[0],
+        };
+      } else {
+        return {
+          success: false,
+          message: 'Неизвестный тип заказа или отсутствуют необходимые данные',
+        };
+      }
+    } catch (error) {
+      console.error('Order processing error:', error);
+      return {
+        success: false,
+        message: 'Ошибка при обработке заказа',
+      };
+    }
   }
 
   // Получить все купленные фильмы пользователя

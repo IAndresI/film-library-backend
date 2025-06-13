@@ -231,7 +231,7 @@ export class PaymentService {
   async handlePaymentWebhook(
     paymentData: INotification,
   ): Promise<{ success: boolean; message: string }> {
-    console.log('handlePaymentWebhook');
+    console.log('handlePaymentWebhook', paymentData);
 
     try {
       const {

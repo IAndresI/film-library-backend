@@ -178,7 +178,7 @@ export const editUser = async (
 ) => {
   try {
     const id = parseInt(req.params.id, 10);
-    const { name } = req.body;
+    const { name, isAdmin } = req.body;
 
     // Получаем старые данные
     const existingUser = await db
@@ -193,7 +193,17 @@ export const editUser = async (
     }
 
     // Готовим объект для обновления
-    const updateData: { name: string; avatar?: string | null } = { name };
+    const updateData: {
+      name: string;
+      avatar?: string | null;
+      isAdmin?: boolean;
+    } = {
+      name,
+    };
+
+    if (isAdmin) {
+      updateData.isAdmin = isAdmin === 'true';
+    }
 
     // Обрабатываем аватар
     if (req.file) {
